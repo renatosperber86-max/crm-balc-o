@@ -1,0 +1,10 @@
+{
+  "name": "crm-balcao",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CRM para pequenas empresas com logins de administrador, gerente e funcionário.",
+  "dependencies": {
+    "@supabase/supabase-js": "2.45.4"
+  }
+}
