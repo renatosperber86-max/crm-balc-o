@@ -83,6 +83,8 @@ async function iniciar() {
   sb.auth.onAuthStateChange((ev) => { if (ev === 'SIGNED_OUT') { S.me = null; mostrar('login'); } });
 }
 
+$('#lVer').addEventListener('change', (e) => { $('#lSenha').type = e.target.checked ? 'text' : 'password'; });
+
 $('#formLogin').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = $('#lBtn'); const err = $('#lErro');
@@ -90,8 +92,12 @@ $('#formLogin').addEventListener('submit', async (e) => {
   const { data, error } = await sb.auth.signInWithPassword({ email: $('#lEmail').value.trim(), password: $('#lSenha').value });
   btn.disabled = false;
   if (error) {
-    err.textContent = /invalid/i.test(error.message) ? 'E-mail ou senha incorretos.'
-      : /banned/i.test(error.message) ? 'Este login foi desativado. Fale com seu gerente.' : msgErro(error);
+    const m = String(error.message || '');
+    err.textContent = /invalid login credentials/i.test(m) ? 'E-mail ou senha incorretos.'
+      : /banned/i.test(m) ? 'Este login foi desativado. Fale com seu gerente.'
+      : /not confirmed/i.test(m) ? 'Este e-mail ainda não foi confirmado no Supabase.'
+      : /api key/i.test(m) ? 'Chave do Supabase errada na Vercel (SUPABASE_ANON_KEY). Detalhe: ' + m
+      : 'Erro ao entrar: ' + msgErro(error);
     err.hidden = false; return;
   }
   $('#lSenha').value = '';
