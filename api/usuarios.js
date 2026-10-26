@@ -5,8 +5,8 @@
 // nunca vai para o navegador.
 import { createClient } from '@supabase/supabase-js';
 
-const URL = process.env.SUPABASE_URL;
-const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const URL = (String(process.env.SUPABASE_URL || '').trim().match(/^https?:\/\/[^\/\s]+/i) || [''])[0];
+const SERVICE = String(process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function falha(res, status, erro) {
