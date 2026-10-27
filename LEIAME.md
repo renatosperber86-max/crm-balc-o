@@ -1,88 +1,86 @@
-# CRM Balcão — como colocar no ar
+# CRM Balcão
 
-Sistema de CRM com três níveis de login:
+CRM para pequenas empresas, com atendimento por WhatsApp, três níveis de login e várias empresas clientes no mesmo sistema.
 
 | Login | O que vê | Pode criar login de |
 |---|---|---|
 | Administrador (você) | Todas as empresas, todos os gerentes e funcionários | Gerente e funcionário |
 | Gerente | Os próprios dados e os da equipe dele | Funcionário da equipe dele |
-| Funcionário | Só os próprios clientes, negócios e tarefas | Ninguém |
+| Funcionário | Só os próprios clientes, conversas, pedidos e lembretes (mais a fila de atendimento) | Ninguém |
 
 Essas regras ficam gravadas no próprio banco de dados. Mesmo que alguém tente acessar por fora das telas, não enxerga o que não pode.
 
-Você vai precisar de três contas gratuitas: **Supabase** (banco e logins), **GitHub** (código) e **Vercel** (deixa o site no ar).
+## Telas
+
+- **Painel**: pedidos, atendimentos, conversas esperando resposta, taxa de resolução, tempo da primeira resposta, gráfico por dia, ranking e desempenho por pessoa. Exporta para planilha (CSV) ou PDF.
+- **Chat**: conversas do WhatsApp com fotos, vídeos, áudios e documentos. Assumir da fila, transferir, encaminhar para outra área, mudar o status, etiquetas, lembretes, pedidos e ordens de serviço direto da conversa, mensagens rápidas com `/`, gravação de áudio, envio da galeria, busca, histórico, fixar, arquivar, favoritar e bloquear.
+- **Chat da equipe**: conversas internas, diretas ou em grupo, com arquivos e mensagens favoritas.
+- **Contatos**: base de clientes com filtros, etiquetas, histórico, importação e exportação de planilha.
+- **Lembretes**: calendário com a agenda do dia. O sistema avisa na hora marcada.
+- **Mensagens rápidas**: atalhos pessoais, como `/oi`, que viram respostas prontas no chat.
+- **Pedidos**: número automático, status, forma e situação do pagamento, filtros e exportação.
+- **Funil de vendas**: negócios por etapa.
+- **Galeria de mídia**: pastas e arquivos, privados, da equipe ou da empresa toda.
+- **Assistência**: ordens de serviço com frete e conta a pagar, e as pendências encaminhadas por outras áreas.
+- **Equipe e logins**, **Etiquetas**, **Configurações** (áreas, tempo de resposta, WhatsApp), **Empresas** e **Suporte** (chamados).
+- **Meu perfil**: foto, status (online, ocupado, offline), tema claro ou escuro, som, senha, verificação em duas etapas, organização do menu e tour guiado.
 
 ---
 
-## Passo 1 — Criar o banco no Supabase
+## Instalação do zero
 
-1. Entre em supabase.com e crie uma conta (pode usar a do GitHub).
-2. Clique em **New project**. Dê um nome (ex.: `crm-balcao`), crie uma senha forte para o banco, escolha a região **South America (São Paulo)** e confirme.
-3. Espere o projeto terminar de criar (1 a 2 minutos).
-4. No menu da esquerda, abra **SQL Editor** e clique em **New query**.
-5. Abra o arquivo `supabase/schema.sql`, copie **tudo**, cole no editor e clique em **Run**. Deve aparecer "Success".
+Você vai precisar de três contas gratuitas: **Supabase** (banco e logins), **GitHub** (código) e **Vercel** (deixa o site no ar).
 
-## Passo 2 — Criar o seu login de administrador
-
-> Faça isso **depois** do passo 1. O primeiro login criado no sistema vira administrador automaticamente.
-
-1. No menu da esquerda, abra **Authentication** → **Users**.
-2. Clique em **Add user** → **Create new user**.
-3. Coloque o seu e-mail e uma senha. Marque **Auto Confirm User**. Confirme.
-
-## Passo 3 — Fechar o cadastro público
-
-Assim ninguém consegue criar conta sozinho. Todos os logins passam por você ou pelos gerentes.
-
-1. Em **Authentication**, abra **Sign In / Providers** (em algumas versões aparece como **Providers** ou **Settings**).
-2. Desligue **Allow new users to sign up** e salve.
-
-## Passo 4 — Copiar as chaves
-
-1. Abra **Project Settings** (engrenagem) → **API** (ou **API Keys**).
-2. Anote três coisas. Se houver uma aba **Legacy API keys**, use as chaves dela:
-   - **Project URL** (algo como `https://xxxx.supabase.co`)
-   - **anon / public** (chave pública)
-   - **service_role** (chave secreta: **nunca** mande para ninguém nem cole em página)
-
-## Passo 5 — Código no GitHub
-
-Crie um repositório vazio no GitHub (ex.: `crm-balcao`) e envie estes arquivos para ele. Se o Claude estiver te ajudando, é só passar o nome do repositório que ele envia o código.
-
-## Passo 6 — Colocar no ar com a Vercel
-
-1. Entre em vercel.com com a sua conta do GitHub.
-2. Clique em **Add New → Project** e importe o repositório `crm-balcao`.
-3. Antes de clicar em Deploy, abra **Environment Variables** e cadastre:
+1. **Supabase**: crie um projeto (região São Paulo). Em **SQL Editor > New query**, cole todo o arquivo `supabase/schema.sql` e clique em **Run**. No resultado embaixo deve aparecer "Tudo certo!".
+2. **Seu login**: em **Authentication > Users > Add user > Create new user**, coloque seu e-mail e uma senha só com letras e números, e marque **Auto Confirm User**. O primeiro login vira administrador.
+3. **Fechar o cadastro público**: em **Authentication > Sign In / Providers**, desligue **Allow new users to sign up**.
+4. **Chaves**: em **Project Settings > Data API** copie o **Project URL** (só até `.supabase.co`). Em **API Keys > Legacy API keys** copie a **anon public** e a **service_role**.
+5. **Vercel**: importe o repositório e cadastre as variáveis:
 
 | Nome | Valor |
 |---|---|
 | `SUPABASE_URL` | o Project URL |
 | `SUPABASE_ANON_KEY` | a chave anon / public |
-| `SUPABASE_SERVICE_ROLE_KEY` | a chave service_role |
+| `SUPABASE_SERVICE_ROLE_KEY` | a chave service_role (secreta) |
 
-4. Clique em **Deploy**. No fim, a Vercel mostra o link do sistema (ex.: `crm-balcao.vercel.app`).
+## Atualizar uma instalação antiga
 
-## Passo 7 — Primeiro uso
+Cole de novo o arquivo `supabase/schema.sql` inteiro no **SQL Editor** e clique em **Run**. Ele só acrescenta o que falta e não apaga dados. Pode rodar quantas vezes precisar.
 
-1. Abra o link e entre com o login do passo 2.
-2. Aba **Empresas** → **+ Nova empresa**.
-3. Aba **Equipe e logins** → **+ Novo login** → crie um **gerente**.
-4. Crie os funcionários escolhendo o gerente de cada um, ou deixe o próprio gerente criar a equipe dele.
-5. Passe o e-mail e a senha para cada pessoa.
+---
+
+## Conectar o WhatsApp (API oficial da Meta)
+
+Faça isso quando fechar com a empresa cliente. Cada empresa usa um número próprio, que **não pode** estar sendo usado no aplicativo WhatsApp comum ao mesmo tempo.
+
+**O que a empresa cliente precisa ter:** um Gerenciador de Negócios da Meta (business.facebook.com), de preferência verificado, um número de telefone para o atendimento e uma forma de pagamento cadastrada na Meta. A Meta cobra por conversa iniciada pela empresa (modelos). As respostas a clientes que chamaram primeiro, dentro de 24 horas, são gratuitas ou bem mais baratas.
+
+**Uma vez só (no seu projeto):**
+1. Em developers.facebook.com, crie um app do tipo **Empresa** e adicione o produto **WhatsApp**.
+2. Na Vercel, cadastre mais duas variáveis e faça um novo Deploy:
+   - `WHATSAPP_VERIFY_TOKEN`: uma senha que você inventa (ex.: `balcao-2026-xyz`).
+   - `WHATSAPP_APP_SECRET`: em **Configurações do app > Básico > Chave secreta do aplicativo**.
+3. No app, em **WhatsApp > Configuração > Webhook**, coloque:
+   - URL de retorno: `https://SEU-SITE.vercel.app/api/whatsapp` (aparece pronto em **Configurações** no CRM, com botão Copiar)
+   - Token de verificação: o mesmo valor de `WHATSAPP_VERIFY_TOKEN`
+   - Depois, assine o campo **messages**.
+
+**Para cada empresa cliente:**
+1. Adicione e verifique o número da empresa em **WhatsApp > Configuração da API**.
+2. Em **business.facebook.com > Usuários do sistema**, crie um usuário do sistema com acesso à conta do WhatsApp e gere um **token permanente** com as permissões `whatsapp_business_messaging` e `whatsapp_business_management`.
+3. No CRM, entre como administrador, escolha a empresa, vá em **Configurações > Conectar WhatsApp** e informe o **ID do número de telefone**, o **ID da conta do WhatsApp Business** e o **token**. O CRM confere com a Meta antes de salvar.
+
+**Regras importantes do WhatsApp:**
+- Depois de 24 horas sem mensagem do cliente, só dá para mandar **modelos aprovados** (criados no Gerenciador do WhatsApp). O chat avisa e tem o botão **Enviar modelo**.
+- Limites de tamanho: imagem 5 MB, vídeo e áudio 16 MB, documento 100 MB.
+
+Enquanto o WhatsApp não está conectado, o chat funciona em modo de teste: as mensagens enviadas ficam só no CRM, e gerentes e o administrador podem **simular mensagem do cliente** pelo menu ⋮ da conversa.
 
 ---
 
 ## Dúvidas comuns
 
 - **Alguém esqueceu a senha:** o gerente (para a equipe dele) ou o administrador abre **Editar** no login da pessoa e coloca uma senha nova.
-- **Funcionário saiu da empresa:** desmarque **Login ativo**. Ele perde o acesso na hora, e os clientes dele continuam visíveis para o gerente. Para passar um cliente para outra pessoa, edite o cliente e troque o **Responsável**.
-- **Mudar um funcionário de equipe:** o administrador edita o login e troca o **Gerente responsável**.
-- **Mais de 200 pessoas usando todo dia:** o plano gratuito do Supabase pausa projetos parados e tem limites de uso. Quando o sistema estiver rodando com clientes de verdade, vale passar para um plano pago.
-
-## Arquivos
-
-- `index.html`, `style.css`, `app.js`: as telas.
-- `api/usuarios.js`: cria, edita e desativa logins conferindo quem pode o quê.
-- `api/config.js`: entrega ao navegador o endereço do banco e a chave pública.
-- `supabase/schema.sql`: tabelas e regras de acesso.
+- **Alguém saiu da empresa:** abra **Editar** no login e desmarque **Login ativo**. A pessoa perde o acesso na hora e os dados continuam lá.
+- **Passar contatos de quem saiu:** no **Chat** ou em **Contatos**, use **Transferir**.
+- **Encaminhar para a Assistência:** no chat, menu ⋮ > **Encaminhar para área**. Quem é da área Assistência (em **Equipe e logins**) vê a pendência e assume.

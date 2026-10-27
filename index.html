@@ -4,23 +4,42 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>CRM Balcão</title>
+<meta name="theme-color" content="#0f6b5c">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='6' y='6' width='20' height='20' rx='4' transform='rotate(45 16 16)' fill='%230f6b5c'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Figtree:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Figtree:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="style.css">
+<script>
+  // aplica o tema antes de desenhar a página (evita piscar)
+  try { var t = localStorage.getItem('crm-tema'); if (t === 'claro' || t === 'escuro') document.documentElement.dataset.tema = t; } catch (e) {}
+</script>
 </head>
 <body>
 
 <!-- Tela de login -->
 <section id="telaLogin" class="login" hidden>
-  <form id="formLogin" class="login-box">
+  <form id="formLogin" class="login-box" novalidate>
     <div class="brand"><i></i>CRM Balcão</div>
     <p class="muted">Entre com o e-mail e a senha que seu gerente ou administrador criou.</p>
     <div class="field"><label for="lEmail">E-mail</label><input id="lEmail" type="email" autocomplete="username" required></div>
     <div class="field"><label for="lSenha">Senha</label><input id="lSenha" type="password" autocomplete="current-password" required></div>
-    <label class="check-line" style="margin:-4px 0 12px"><input type="checkbox" id="lVer"> Mostrar senha</label>
+    <label class="check-line"><input type="checkbox" id="lVer"> Mostrar senha</label>
     <div class="err" id="lErro" hidden></div>
     <button class="btn pri" type="submit" id="lBtn">Entrar</button>
     <p class="muted small">Esqueceu a senha? Peça para seu gerente ou para o administrador criar uma nova.</p>
+  </form>
+</section>
+
+<!-- Código da verificação em duas etapas -->
+<section id="telaMfa" class="login" hidden>
+  <form id="formMfa" class="login-box" novalidate>
+    <div class="brand"><i></i>CRM Balcão</div>
+    <p>Digite o código de 6 números que aparece no seu aplicativo autenticador.</p>
+    <div class="field"><label for="mfaCod">Código</label><input id="mfaCod" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></div>
+    <div class="err" id="mfaErro" hidden></div>
+    <button class="btn pri" type="submit">Confirmar</button>
+    <button class="btn" type="button" data-sair>Sair</button>
   </form>
 </section>
 
@@ -34,87 +53,40 @@
 </section>
 
 <!-- Sistema -->
-<div id="app" hidden>
-  <header>
-    <div class="wrap">
-      <div class="top">
-        <div class="brand"><i></i>CRM Balcão</div>
-        <div class="who">
-          <select id="selEmpresa" aria-label="Empresa" hidden></select>
-          <span id="quem" class="muted small"></span>
-          <button class="btn sm" id="btnAtualizar">Atualizar</button>
-          <button class="btn sm" data-sair>Sair</button>
-        </div>
-      </div>
-      <nav role="tablist" id="tabs"></nav>
+<div id="app" class="shell" hidden>
+  <aside id="side" class="side" aria-label="Menu">
+    <div class="side-top">
+      <div class="brand"><i></i><span>CRM Balcão</span></div>
+      <button class="icon-btn side-fechar" id="btnFecharMenu" aria-label="Fechar menu">✕</button>
     </div>
-  </header>
+    <nav id="menu"></nav>
+    <div class="side-foot muted small" id="sideFoot"></div>
+  </aside>
+  <div class="side-veu" id="sideVeu" hidden></div>
 
-  <main class="wrap">
-    <div class="filtros" id="filtros" hidden>
-      <label for="selPessoa" class="muted small">Mostrar dados de</label>
-      <select id="selPessoa"></select>
-    </div>
-    <div id="semEmpresa" class="empty" hidden>Nenhuma empresa cadastrada ainda. Vá em <b>Empresas</b> e crie a primeira.</div>
-
-    <section id="v-painel" class="view">
-      <div class="bar"><h2>Painel</h2><span class="muted" id="mesLabel"></span></div>
-      <div class="kpis" id="kpis"></div>
-      <div class="grid2">
-        <div class="panel"><h3>Negócios abertos por etapa</h3><div id="stageBars"></div></div>
-        <div class="panel"><h3>Próximas tarefas</h3><div class="list" id="nextTasks"></div></div>
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-btn" id="btnMenu" aria-label="Abrir ou recolher o menu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+      <div class="crumb"><span class="muted small" id="crumbEmp"></span><h1 id="titulo">Painel</h1></div>
+      <div class="top-r">
+        <select id="selEmpresa" aria-label="Empresa" hidden></select>
+        <span class="rt" id="rt" title="Atualização automática"><i></i><span>Conectando</span></span>
+        <button class="icon-btn" id="btnAjuda" aria-label="Tour pelo sistema" title="Tour pelo sistema"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17.5v.01"/></svg></button>
+        <button class="icon-btn" id="btnSuporte" aria-label="Suporte" title="Abrir chamado de suporte"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13a8 8 0 0 1 16 0v4a2 2 0 0 1-2 2h-2v-6h4M4 13v4a2 2 0 0 0 2 2h2v-6H4"/></svg></button>
+        <button class="icon-btn bell" id="btnNotif" aria-label="Notificações" title="Notificações"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15zM10 20a2 2 0 0 0 4 0"/></svg><b id="notifN" hidden></b></button>
+        <button class="avatar-btn" id="btnEu" aria-label="Minha conta"></button>
       </div>
-      <div class="panel" id="porPessoaBox" hidden style="margin-top:16px">
-        <h3>Desempenho por pessoa</h3>
-        <div class="table-wrap flat"><table><thead><tr><th>Pessoa</th><th>Clientes</th><th class="r">Em aberto</th><th class="r">Vendido no mês</th><th class="r">Tarefas atrasadas</th></tr></thead><tbody id="porPessoa"></tbody></table></div>
-      </div>
-    </section>
-
-    <section id="v-clientes" class="view" hidden>
-      <div class="bar">
-        <h2>Clientes</h2>
-        <div class="bar-r">
-          <input id="q" class="search" type="search" placeholder="Buscar por nome, telefone, empresa…" aria-label="Buscar clientes">
-          <button class="btn pri" data-new="cliente">+ Novo cliente</button>
-        </div>
-      </div>
-      <div id="clientesBox"></div>
-    </section>
-
-    <section id="v-funil" class="view" hidden>
-      <div class="bar"><h2>Funil de vendas</h2><button class="btn pri" data-new="negocio">+ Novo negócio</button></div>
-      <div class="board-wrap"><div class="board" id="board"></div></div>
-    </section>
-
-    <section id="v-agenda" class="view" hidden>
-      <div class="bar">
-        <h2>Agenda e tarefas</h2>
-        <div class="bar-r">
-          <select id="agFilter" aria-label="Filtrar tarefas">
-            <option value="pend">Pendentes</option><option value="hoje">Hoje</option><option value="todas">Todas</option><option value="feitas">Concluídas</option>
-          </select>
-          <button class="btn pri" data-new="tarefa">+ Nova tarefa</button>
-        </div>
-      </div>
-      <div class="panel"><div class="list" id="agendaList"></div></div>
-    </section>
-
-    <section id="v-equipe" class="view" hidden>
-      <div class="bar"><h2>Equipe e logins</h2><button class="btn pri" id="btnNovoLogin">+ Novo login</button></div>
-      <div id="equipeBox"></div>
-    </section>
-
-    <section id="v-empresas" class="view" hidden>
-      <div class="bar"><h2>Empresas</h2><button class="btn pri" id="btnNovaEmpresa">+ Nova empresa</button></div>
-      <div class="panel"><div class="list" id="empresasList"></div></div>
-    </section>
-  </main>
+    </header>
+    <main id="view" class="view-area"></main>
+  </div>
 </div>
 
-<dialog id="dlg"><form class="dlg" id="dlgForm" method="dialog"></form></dialog>
-<div id="toast" class="toast" hidden></div>
+<div id="pop" class="pop" hidden></div>
+<dialog id="dlg"><form class="dlg" id="dlgForm" method="dialog" novalidate></form></dialog>
+<div id="tour" class="tour" hidden></div>
+<div id="toast" class="toast" role="status" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="app.js"></script>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>

@@ -44,6 +44,12 @@ export default async function handler(req, res) {
   }
 }
 
+async function areaValida(sb, areaId, empresaId) {
+  if (!areaId) return true;
+  const { data } = await sb.from('areas').select('id').eq('id', areaId).eq('empresa_id', empresaId).maybeSingle();
+  return !!data;
+}
+
 async function gerenteValido(sb, gerenteId, empresaId) {
   if (!gerenteId) return false;
   const { data } = await sb.from('perfis').select('id,papel,empresa_id,ativo').eq('id', gerenteId).maybeSingle();
@@ -75,6 +81,9 @@ async function criar(sb, eu, b, res) {
     }
   }
 
+  const area_id = b.area_id || null;
+  if (!(await areaValida(sb, area_id, empresa_id))) return falha(res, 400, 'Escolha uma área válida da empresa.');
+
   const { data: criado, error } = await sb.auth.admin.createUser({
     email, password: senha, email_confirm: true, user_metadata: { nome },
   });
@@ -86,7 +95,7 @@ async function criar(sb, eu, b, res) {
   }
 
   const { error: perfilErr } = await sb.from('perfis').upsert({
-    id: criado.user.id, nome, email, papel, empresa_id, gerente_id, ativo: true,
+    id: criado.user.id, nome, email, papel, empresa_id, gerente_id, area_id, ativo: true,
   });
   if (perfilErr) {
     await sb.auth.admin.deleteUser(criado.user.id); // desfaz para não sobrar login sem papel
@@ -113,6 +122,10 @@ async function atualizar(sb, eu, b, res) {
       return falha(res, 400, 'O novo gerente precisa ser um gerente ativo da mesma empresa.');
     }
     mudancas.gerente_id = b.gerente_id;
+  }
+  if (b.area_id !== undefined) {
+    if (!(await areaValida(sb, b.area_id || null, alvo.empresa_id))) return falha(res, 400, 'Escolha uma área válida da empresa.');
+    mudancas.area_id = b.area_id || null;
   }
   if (b.senha !== undefined && b.senha !== '') {
     if (String(b.senha).length < 8) return falha(res, 400, 'A senha precisa ter pelo menos 8 caracteres.');
