@@ -431,3 +431,13 @@ dialog::backdrop{background:rgba(5,15,13,.5)}
 .tour .caixa p{margin:0;font-size:14px}
 .tour .pe{display:flex;justify-content:space-between;align-items:center;gap:8px}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+
+/* notas internas no chat */
+.nota-int{align-self:center;width:min(560px,90%);background:#fff4c2;color:#3d3000;border:1px dashed #d9b300;border-radius:10px;padding:7px 10px 4px;font-size:14px}
+:root[data-tema="escuro"] .nota-int{background:#3a3210;color:#f3e7b0;border-color:#8a7420}
+@media (prefers-color-scheme: dark){:root:not([data-tema="claro"]) .nota-int{background:#3a3210;color:#f3e7b0;border-color:#8a7420}}
+.nota-int .autor{font-size:12px;font-weight:700;margin-bottom:2px}
+.nota-int .meta{display:flex;justify-content:flex-end;gap:6px;align-items:center;font-size:11px;opacity:.8}
+.cv-comp textarea.modo-nota{background:#fff4c2;color:#3d3000;border-color:#d9b300}
+:root[data-tema="escuro"] .cv-comp textarea.modo-nota{background:#3a3210;color:#f3e7b0}
+@media (max-width:760px){#cvAgendar,#cvProd{display:none}}

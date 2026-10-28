@@ -105,7 +105,7 @@ export function formPedido(p, onSalvo, ctx = {}) {
   const nomeCli = async () => cliId ? ((await S.sb.from('clientes').select('nome').eq('id', cliId).maybeSingle()).data?.nome || 'Contato') : 'Nenhum contato escolhido';
   const f = abrir(`<h3>${id ? 'Pedido ' + o.numero : 'Novo pedido'}</h3>
     <div class="field"><span class="lbl">Cliente</span><div style="display:flex;gap:8px;align-items:center"><b id="pfCli">…</b><button type="button" class="btn sm" id="pfTroca">Escolher</button></div></div>
-    <div class="field"><label for="pfP">Produto *</label><input id="pfP" name="produto" required value="${esc(o.produto)}" placeholder="Ex.: Sofá retrátil 2,30m cinza"></div>
+    <div class="field"><label for="pfP">Produto *</label><div style="display:flex;gap:6px"><input id="pfP" name="produto" required value="${esc(o.produto)}" placeholder="Ex.: Sofá retrátil 2,30m cinza"><button type="button" class="btn" id="pfCat">Catálogo</button></div></div>
     <div class="fields2"><div class="field"><label for="pfQ">Quantidade</label><input id="pfQ" name="quantidade" type="number" min="0" step="0.01" value="${esc(o.quantidade)}"></div>
       <div class="field"><label for="pfT">Total (R$) *</label><input id="pfT" name="total" type="number" min="0" step="0.01" inputmode="decimal" required value="${esc(o.total)}"></div></div>
     <div class="fields3"><div class="field"><label for="pfS">Status</label><select id="pfS" name="status">${Object.entries(ST_PED).map(([k, v]) => `<option value="${k}" ${o.status === k ? 'selected' : ''}>${v[0]}</option>`).join('')}</select></div>
@@ -124,6 +124,14 @@ export function formPedido(p, onSalvo, ctx = {}) {
   },
   async () => { await q(S.sb.from('pedidos').delete().eq('id', id)); toast('Pedido excluído'); onSalvo?.(null); });
   nomeCli().then((n) => { const x = f.querySelector('#pfCli'); if (x) x.textContent = n; });
+  f.querySelector('#pfCat').onclick = async () => {
+    const vals = Object.fromEntries(new FormData(f).entries());
+    const { escolherProduto } = await import('./produtos.js');
+    escolherProduto('Produto do pedido', (pr) => {
+      const qtd = Number(vals.quantidade) || 1;
+      formPedido({ ...o, ...vals, id, cliente_id: cliId, produto: pr.nome, total: (Number(pr.preco) * qtd).toFixed(2) }, onSalvo, ctx);
+    });
+  };
   f.querySelector('#pfTroca').onclick = () => {
     const html = f.innerHTML; const vals = Object.fromEntries(new FormData(f).entries());
     escolherContato('Cliente do pedido', (c) => { cliId = c.id; formPedido({ ...o, ...vals, id, cliente_id: c.id, total: vals.total, quantidade: vals.quantidade }, onSalvo, ctx); void html; });

@@ -14,6 +14,8 @@ export const TELAS = [
   { id: 'lembretes', nome: 'Lembretes', grupo: 'atendimento', ic: 'lembretes', dica: 'Seus retornos e compromissos num calendário. O sistema avisa na hora marcada.' },
   { id: 'rapidas', nome: 'Mensagens rápidas', grupo: 'atendimento', ic: 'rapidas', dica: 'Atalhos como /oi que viram respostas prontas no chat. Digite / na conversa para usar.' },
   { id: 'pedidos', nome: 'Pedidos', grupo: 'vendas', ic: 'pedidos', dica: 'Os pedidos de venda com status e pagamento. Filtre por data, status e etiqueta.' },
+  { id: 'orcamentos', nome: 'Orçamentos', grupo: 'vendas', ic: 'doc', dica: 'Monte orçamentos com os produtos, envie o PDF para o cliente e transforme em pedido quando ele aprovar.' },
+  { id: 'produtos', nome: 'Produtos', grupo: 'vendas', ic: 'caixa', dica: 'O catálogo com foto e preço, para enviar no chat com um clique.' },
   { id: 'funil', nome: 'Funil de vendas', grupo: 'vendas', ic: 'funil', dica: 'Os negócios em andamento, do primeiro contato até o fechamento.' },
   { id: 'galeria', nome: 'Galeria de mídia', grupo: 'midia', ic: 'galeria', dica: 'Fotos, vídeos e arquivos dos produtos, em pastas. Envie direto para o cliente pelo chat.' },
   { id: 'assistencia', nome: 'Assistência', grupo: 'conta', ic: 'assistencia', dica: 'Ordens de serviço e os atendimentos encaminhados para a Assistência.' },
@@ -135,6 +137,8 @@ async function entrar(id) {
   await carregarEmpresas();
   await carregarBase();
   rpc('ping_presenca').catch(() => {});
+  if (me.papel === 'admin') rpc('registrar_url_automacao', { p_url: location.origin }).catch(() => {});
+  setTimeout(processarAutomacoes, 5000);
   irPara(location.hash || '#/painel', true);
   if (!me.prefs.tour_ok) setTimeout(() => tour(), 600);
 }
@@ -280,7 +284,7 @@ function ligarTempoReal() {
   if (!S.empresaId) return;
   const f = `empresa_id=eq.${S.empresaId}`;
   canal = S.sb.channel('crm-' + S.empresaId + '-' + uid().slice(0, 6));
-  for (const t of ['conversas', 'mensagens', 'equipe_mensagens', 'equipe_conversas', 'encaminhamentos']) {
+  for (const t of ['conversas', 'mensagens', 'equipe_mensagens', 'equipe_conversas', 'encaminhamentos', 'notas_internas', 'mensagens_agendadas']) {
     canal.on('postgres_changes', { event: '*', schema: 'public', table: t, filter: f }, (p) => emitir(t, p));
   }
   canal.on('postgres_changes', { event: '*', schema: 'public', table: 'notificacoes', filter: `user_id=eq.${S.me.id}` }, (p) => {
@@ -295,6 +299,9 @@ setInterval(() => {
   if (!S.rtOk) { emitir('tick'); atualizarNotificacoes(); }
 }, 20000);
 setInterval(() => { if (S.me && !document.hidden) rpc('ping_presenca').catch(() => {}); }, 60000);
+// reserva das automações: se o relógio do banco não estiver ligado, quem estiver com o CRM aberto dispara
+function processarAutomacoes() { if (S.me) fetch('/api/automacao', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"acao":"processar"}' }).catch(() => {}); }
+setInterval(processarAutomacoes, 60000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && S.me) { emitir('tick'); atualizarNotificacoes(); } });
 
 function avisoNavegador(n) {

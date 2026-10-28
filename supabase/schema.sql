@@ -360,6 +360,105 @@ create table if not exists public.whatsapp_tokens (
   access_token text not null
 );
 
+-- ---------- versão 3 ----------
+-- configurações da empresa (rodízio, alertas, horário, pesquisa, retorno)
+alter table public.empresas add column if not exists config jsonb not null default '{}'::jsonb;
+alter table public.perfis add column if not exists comissao_pct numeric(5,2) not null default 0;
+alter table public.perfis add column if not exists recebe_fila boolean not null default true;
+alter table public.perfis add column if not exists ultima_atribuicao timestamptz;
+alter table public.conversas add column if not exists alertado_em timestamptz;
+alter table public.conversas add column if not exists retorno_em timestamptz;
+alter table public.conversas add column if not exists pesquisa_pendente boolean not null default false;
+alter table public.conversas add column if not exists pesquisa_em timestamptz;
+alter table public.conversas add column if not exists auto_resposta_em timestamptz;
+alter table public.mensagens add column if not exists automatica boolean not null default false;
+
+-- Notas internas da conversa (o cliente não vê)
+create table if not exists public.notas_internas (
+  id uuid primary key default gen_random_uuid(),
+  empresa_id uuid not null references public.empresas(id) on delete cascade,
+  conversa_id uuid not null references public.conversas(id) on delete cascade,
+  autor_id uuid references public.perfis(id) on delete set null,
+  texto text not null,
+  criado_em timestamptz not null default now()
+);
+
+-- Catálogo de produtos
+create table if not exists public.produtos (
+  id uuid primary key default gen_random_uuid(),
+  empresa_id uuid not null references public.empresas(id) on delete cascade,
+  nome text not null,
+  codigo text default '',
+  categoria text default '',
+  descricao text default '',
+  preco numeric(12,2) not null default 0,
+  foto_path text,
+  foto_mime text,
+  ativo boolean not null default true,
+  criado_em timestamptz not null default now()
+);
+
+-- Orçamentos (viram PDF e podem virar pedido)
+create table if not exists public.orcamentos (
+  id uuid primary key default gen_random_uuid(),
+  empresa_id uuid not null references public.empresas(id) on delete cascade,
+  numero int,
+  responsavel_id uuid not null references public.perfis(id),
+  cliente_id uuid references public.clientes(id) on delete set null,
+  conversa_id uuid references public.conversas(id) on delete set null,
+  itens jsonb not null default '[]'::jsonb,
+  subtotal numeric(12,2) not null default 0,
+  desconto numeric(12,2) not null default 0,
+  frete numeric(12,2) not null default 0,
+  total numeric(12,2) not null default 0,
+  validade date,
+  condicoes text default '',
+  obs text default '',
+  status text not null default 'rascunho' check (status in ('rascunho','enviado','aprovado','recusado')),
+  pdf_path text,
+  pedido_id uuid references public.pedidos(id) on delete set null,
+  criado_em timestamptz not null default now(),
+  atualizado_em timestamptz not null default now(),
+  unique (empresa_id, numero)
+);
+
+-- Mensagens agendadas
+create table if not exists public.mensagens_agendadas (
+  id uuid primary key default gen_random_uuid(),
+  empresa_id uuid not null references public.empresas(id) on delete cascade,
+  conversa_id uuid not null references public.conversas(id) on delete cascade,
+  autor_id uuid not null references public.perfis(id) on delete cascade,
+  texto text not null,
+  enviar_em timestamptz not null,
+  status text not null default 'pendente' check (status in ('pendente','enviando','enviada','cancelada','erro')),
+  erro text,
+  enviada_em timestamptz,
+  criado_em timestamptz not null default now()
+);
+
+-- Metas do mês por pessoa
+create table if not exists public.metas (
+  empresa_id uuid not null references public.empresas(id) on delete cascade,
+  user_id uuid not null references public.perfis(id) on delete cascade,
+  mes date not null,
+  meta_valor numeric(12,2) not null default 0,
+  meta_pedidos int not null default 0,
+  primary key (user_id, mes)
+);
+
+-- Notas da pesquisa de satisfação
+create table if not exists public.avaliacoes (
+  id uuid primary key default gen_random_uuid(),
+  empresa_id uuid not null references public.empresas(id) on delete cascade,
+  conversa_id uuid references public.conversas(id) on delete set null,
+  responsavel_id uuid references public.perfis(id) on delete set null,
+  nota int not null check (nota between 1 and 5),
+  criado_em timestamptz not null default now()
+);
+
+-- configurações internas (endereço do site para as automações)
+create table if not exists public._config (chave text primary key, valor text, atualizado_em timestamptz default now());
+
 -- ---------- Índices ----------
 create index if not exists clientes_resp_idx on public.clientes(empresa_id, responsavel_id);
 create unique index if not exists clientes_whatsapp_uk on public.clientes(empresa_id, whatsapp) where whatsapp is not null and whatsapp <> '';
@@ -384,6 +483,13 @@ create index if not exists eqmsg_conv_idx on public.equipe_mensagens(conversa_id
 create index if not exists eqmemb_user_idx on public.equipe_membros(user_id);
 create index if not exists notif_user_idx on public.notificacoes(user_id, lida, criado_em desc);
 create index if not exists chamados_emp_idx on public.chamados(empresa_id, status);
+create index if not exists notas_conv_idx on public.notas_internas(conversa_id, criado_em);
+create index if not exists produtos_emp_idx on public.produtos(empresa_id, nome);
+create index if not exists orc_resp_idx on public.orcamentos(empresa_id, responsavel_id);
+create index if not exists agend_idx on public.mensagens_agendadas(status, enviar_em);
+create index if not exists agend_conv_idx on public.mensagens_agendadas(conversa_id);
+create index if not exists aval_emp_idx on public.avaliacoes(empresa_id, criado_em);
+create index if not exists conv_espera_idx on public.conversas(status, aguardando_desde);
 
 -- =====================================================================
 -- 2. FUNÇÕES DE APOIO (quem é o usuário logado)
@@ -581,11 +687,41 @@ drop trigger if exists numerar on public.pedidos;
 create trigger numerar before insert or update on public.pedidos for each row execute function public.numerar();
 drop trigger if exists numerar on public.ordens_servico;
 create trigger numerar before insert or update on public.ordens_servico for each row execute function public.numerar();
+drop trigger if exists numerar on public.orcamentos;
+create trigger numerar before insert or update on public.orcamentos for each row execute function public.numerar();
+
+-- Distribui uma conversa da fila para o próximo atendente (rodízio)
+create or replace function public.distribuir(p_conversa uuid) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare c public.conversas; cfg jsonb; esc uuid; nome_cli text;
+begin
+  select * into c from public.conversas where id = p_conversa;
+  if c.id is null or c.responsavel_id is not null or c.area_id is not null or c.status = 'encerrada' then return null; end if;
+  select config into cfg from public.empresas where id = c.empresa_id;
+  if coalesce(cfg->>'distribuicao', 'manual') <> 'rodizio' then return null; end if;
+  select p.id into esc from public.perfis p
+  where p.empresa_id = c.empresa_id and p.ativo and p.recebe_fila
+    and (p.papel = 'funcionario' or (p.papel = 'gerente' and coalesce((cfg->>'rodizio_gerentes')::boolean, false)))
+    and (coalesce(cfg->>'rodizio_area', '') = '' or p.area_id::text = cfg->>'rodizio_area')
+    and (not coalesce((cfg->>'rodizio_online')::boolean, true) or (p.presenca = 'online' and p.visto_em > now() - interval '4 minutes'))
+  order by p.ultima_atribuicao asc nulls first, p.criado_em
+  limit 1 for update of p skip locked;
+  if esc is null then return null; end if;
+  update public.perfis set ultima_atribuicao = now() where id = esc;
+  update public.conversas set responsavel_id = esc,
+    status = case when aguardando_desde is not null then 'aguardando_atendente' else 'ativo' end where id = c.id;
+  update public.clientes set responsavel_id = esc where id = c.cliente_id and responsavel_id is null;
+  insert into public.conversa_eventos (empresa_id, conversa_id, tipo, para_id, texto)
+  values (c.empresa_id, c.id, 'atribuida', esc, 'Distribuída automaticamente para ' || coalesce((select nullif(nome, '') from public.perfis where id = esc), 'atendente'));
+  select nome into nome_cli from public.clientes where id = c.cliente_id;
+  perform public.notificar(esc, c.empresa_id, 'transferencia', 'Novo cliente para você', coalesce(nome_cli, ''), 'chat:' || c.id);
+  return esc;
+end $$;
 
 -- Cada mensagem nova atualiza a conversa, o tempo de resposta e avisa o responsável
 create or replace function public.ao_criar_mensagem() returns trigger
 language plpgsql security definer set search_path = public as $$
-declare c public.conversas; previa text; era_encerrada boolean; nome_cli text;
+declare c public.conversas; previa text; era_encerrada boolean; nome_cli text; nota int; novo_resp uuid;
 begin
   -- mensagem que falhou no envio não conta como resposta
   if new.direcao = 'out' and new.status = 'erro' then return new; end if;
@@ -598,18 +734,39 @@ begin
   if new.tipo in ('imagem','video','documento') and coalesce(new.texto, '') <> '' then previa := previa || ' · ' || new.texto; end if;
   era_encerrada := c.status = 'encerrada';
 
+  -- mensagem automática (fora do horário, pesquisa): só atualiza a prévia
+  if new.direcao = 'out' and new.automatica then
+    update public.conversas set ultima_msg_em = new.criado_em, ultima_msg_texto = left(previa, 200), ultima_msg_direcao = 'out' where id = c.id;
+    return new;
+  end if;
+
   if new.direcao = 'in' then
+    -- resposta da pesquisa de satisfação (uma nota de 1 a 5)
+    if c.pesquisa_pendente and c.pesquisa_em > now() - interval '24 hours' and new.tipo = 'texto' and btrim(coalesce(new.texto, '')) ~ '^[1-5]$' then
+      nota := btrim(new.texto)::int;
+      insert into public.avaliacoes (empresa_id, conversa_id, responsavel_id, nota) values (c.empresa_id, c.id, c.responsavel_id, nota);
+      update public.conversas set pesquisa_pendente = false, ultima_msg_em = new.criado_em, ultima_msg_texto = left(previa, 200),
+        ultima_msg_direcao = 'in', janela_ate = new.criado_em + interval '24 hours' where id = c.id;
+      insert into public.conversa_eventos (empresa_id, conversa_id, tipo, texto)
+      values (c.empresa_id, c.id, 'avaliacao', 'Cliente avaliou o atendimento com nota ' || nota);
+      update public.clientes set ultima_interacao = new.criado_em where id = c.cliente_id;
+      return new;
+    end if;
     update public.conversas set
       ultima_msg_em = new.criado_em, ultima_msg_texto = left(previa, 200), ultima_msg_direcao = 'in',
       nao_lidas = nao_lidas + 1, aguardando_desde = coalesce(aguardando_desde, new.criado_em),
-      janela_ate = new.criado_em + interval '24 hours', arquivada = false, encerrada_em = null,
+      janela_ate = new.criado_em + interval '24 hours', arquivada = false, encerrada_em = null, pesquisa_pendente = false,
       status = case when responsavel_id is null then 'fila' else 'aguardando_atendente' end
     where id = c.id;
     if era_encerrada then
       insert into public.conversa_eventos (empresa_id, conversa_id, tipo, texto) values (c.empresa_id, c.id, 'reaberta', 'Cliente voltou a falar');
     end if;
-    select nome into nome_cli from public.clientes where id = c.cliente_id;
-    perform public.notificar(c.responsavel_id, c.empresa_id, 'mensagem', 'Nova mensagem de ' || coalesce(nome_cli, 'cliente'), previa, 'chat:' || c.id);
+    -- conversa sem dono: tenta o rodízio automático
+    if c.responsavel_id is null and c.area_id is null then novo_resp := public.distribuir(c.id); end if;
+    if novo_resp is null then
+      select nome into nome_cli from public.clientes where id = c.cliente_id;
+      perform public.notificar(c.responsavel_id, c.empresa_id, 'mensagem', 'Nova mensagem de ' || coalesce(nome_cli, 'cliente'), previa, 'chat:' || c.id);
+    end if;
   else
     if c.aguardando_desde is not null then
       insert into public.respostas (empresa_id, conversa_id, responsavel_id, esperou_seg)
@@ -893,6 +1050,172 @@ begin
   delete from public.equipe_membros where conversa_id = c.id and user_id = any(coalesce(p_remover, '{}')) and user_id <> auth.uid();
 end $$;
 
+-- Passa TODA a carteira de uma pessoa para outra (contatos, conversas, negócios abertos e lembretes)
+create or replace function public.transferir_carteira(p_de uuid, p_para uuid, p_lembretes boolean default true) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare de public.perfis; n_cli int; n_conv int; n_neg int; n_lem int := 0; nome_para text;
+begin
+  select * into de from public.perfis where id = p_de;
+  if de.id is null or de.empresa_id is null then raise exception 'Pessoa não encontrada.'; end if;
+  if not public.lider_da_empresa(de.empresa_id) or not public.pode_ver_pessoa(p_de) then raise exception 'Você só pode transferir a carteira de quem é da sua equipe.'; end if;
+  if p_de = p_para then raise exception 'Escolha outra pessoa para receber.'; end if;
+  if not public.pessoa_da_empresa(p_para, de.empresa_id) then raise exception 'Escolha alguém ativo da mesma empresa.'; end if;
+  select coalesce(nullif(nome, ''), email) into nome_para from public.perfis where id = p_para;
+  update public.clientes set responsavel_id = p_para where empresa_id = de.empresa_id and responsavel_id = p_de;
+  get diagnostics n_cli = row_count;
+  with mud as (
+    update public.conversas set responsavel_id = p_para,
+      status = case when status = 'encerrada' then status when aguardando_desde is not null then 'aguardando_atendente' else status end
+    where empresa_id = de.empresa_id and responsavel_id = p_de returning id)
+  insert into public.conversa_eventos (empresa_id, conversa_id, tipo, autor_id, para_id, texto)
+  select de.empresa_id, id, 'transferida', auth.uid(), p_para, 'Carteira transferida para ' || nome_para from mud;
+  get diagnostics n_conv = row_count;
+  update public.negocios set responsavel_id = p_para where empresa_id = de.empresa_id and responsavel_id = p_de and etapa not in ('ganho','perdido');
+  get diagnostics n_neg = row_count;
+  if p_lembretes then
+    update public.tarefas set responsavel_id = p_para where empresa_id = de.empresa_id and responsavel_id = p_de and not feita;
+    get diagnostics n_lem = row_count;
+  end if;
+  perform public.notificar(p_para, de.empresa_id, 'transferencia', 'Você recebeu a carteira de ' || coalesce(nullif(de.nome, ''), de.email),
+    n_cli || ' contato(s) e ' || n_conv || ' conversa(s)', '');
+  return jsonb_build_object('contatos', n_cli, 'conversas', n_conv, 'negocios', n_neg, 'lembretes', n_lem);
+end $$;
+
+-- Passa alguns contatos escolhidos para outra pessoa
+create or replace function public.transferir_contatos(p_clientes uuid[], p_para uuid) returns int
+language plpgsql security definer set search_path = public as $$
+declare r record; n int := 0; nome_para text; emp uuid;
+begin
+  for r in select * from public.clientes where id = any(coalesce(p_clientes, '{}')) loop
+    if not public.lider_da_empresa(r.empresa_id) or not (r.responsavel_id is null or public.pode_ver_pessoa(r.responsavel_id)) then continue; end if;
+    if not public.pessoa_da_empresa(p_para, r.empresa_id) then raise exception 'Escolha alguém ativo da mesma empresa.'; end if;
+    emp := r.empresa_id;
+    select coalesce(nullif(nome, ''), email) into nome_para from public.perfis where id = p_para;
+    update public.clientes set responsavel_id = p_para where id = r.id;
+    with mud as (
+      update public.conversas set responsavel_id = p_para, area_id = null,
+        status = case when status = 'encerrada' then status when aguardando_desde is not null then 'aguardando_atendente' when status = 'fila' then 'ativo' else status end
+      where cliente_id = r.id returning id)
+    insert into public.conversa_eventos (empresa_id, conversa_id, tipo, autor_id, para_id, texto)
+    select r.empresa_id, id, 'transferida', auth.uid(), p_para, 'Transferida para ' || nome_para from mud;
+    n := n + 1;
+  end loop;
+  if n > 0 and p_para <> auth.uid() then perform public.notificar(p_para, emp, 'transferencia', n || ' contato(s) transferido(s) para você', '', ''); end if;
+  return n;
+end $$;
+
+-- Configurações da empresa (rodízio, alertas, horário, pesquisa, retorno). Junta com o que já existe.
+create or replace function public.salvar_config(p_empresa uuid, p_config jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare r jsonb;
+begin
+  if not public.lider_da_empresa(p_empresa) then raise exception 'Só gerente ou administrador pode mudar isso.'; end if;
+  if jsonb_typeof(coalesce(p_config, '{}'::jsonb)) <> 'object' then raise exception 'Configuração inválida.'; end if;
+  update public.empresas set config = config || p_config where id = p_empresa returning config into r;
+  return r;
+end $$;
+
+-- Endereço do site, para o banco chamar as automações a cada minuto
+create or replace function public.registrar_url_automacao(p_url text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if public.meu_papel() <> 'admin' then return; end if;
+  if p_url !~ '^https?://[^/\s]+$' then raise exception 'Endereço inválido.'; end if;
+  insert into public._config (chave, valor, atualizado_em) values ('url', p_url, now())
+  on conflict (chave) do update set valor = excluded.valor, atualizado_em = now();
+end $$;
+
+-- Evita rodar as automações mais de uma vez a cada 20 segundos
+create or replace function public.pode_processar() returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public._config (chave, valor, atualizado_em) values ('ultimo_processar', '', now() - interval '1 hour') on conflict (chave) do nothing;
+  update public._config set atualizado_em = now() where chave = 'ultimo_processar' and atualizado_em < now() - interval '20 seconds';
+  return found;
+end $$;
+
+-- Chamado pelo relógio do banco (pg_cron) a cada minuto
+create or replace function public.disparar_automacoes() returns void
+language plpgsql security definer set search_path = public as $$
+declare u text;
+begin
+  select valor into u from public._config where chave = 'url';
+  if u is null then return; end if;
+  begin
+    perform net.http_post(url := u || '/api/automacao', body := jsonb_build_object('acao', 'processar'), headers := jsonb_build_object('Content-Type', 'application/json'));
+  exception when others then null;
+  end;
+end $$;
+
+-- Avisa quando cliente espera resposta há mais tempo que o combinado
+create or replace function public.processar_alertas() returns int
+language plpgsql security definer set search_path = public as $$
+declare r record; n int := 0; nome_cli text; min int; txt text; ger uuid;
+begin
+  for r in
+    select c.*, coalesce((e.config->>'alerta_minutos')::int, 15) lim from public.conversas c join public.empresas e on e.id = c.empresa_id
+    where c.status in ('fila','aguardando_atendente') and c.aguardando_desde is not null
+      and coalesce((e.config->>'alerta_minutos')::int, 15) > 0
+      and c.aguardando_desde < now() - make_interval(mins => coalesce((e.config->>'alerta_minutos')::int, 15))
+      and (c.alertado_em is null or c.alertado_em < c.aguardando_desde)
+    order by c.aguardando_desde limit 300
+  loop
+    select nome into nome_cli from public.clientes where id = r.cliente_id;
+    min := floor(extract(epoch from (now() - r.aguardando_desde)) / 60);
+    txt := coalesce(nome_cli, 'Cliente') || ' espera resposta há ' || case when min >= 120 then (min / 60) || ' h' else min || ' min' end;
+    if r.responsavel_id is not null then
+      perform public.notificar(r.responsavel_id, r.empresa_id, 'alerta', 'Cliente esperando resposta', txt, 'chat:' || r.id);
+      select case when papel = 'funcionario' then gerente_id end into ger from public.perfis where id = r.responsavel_id;
+      perform public.notificar(ger, r.empresa_id, 'alerta', 'Cliente da equipe esperando', txt || ' (com ' || coalesce((select nullif(nome, '') from public.perfis where id = r.responsavel_id), 'atendente') || ')', 'chat:' || r.id);
+    else
+      insert into public.notificacoes (user_id, empresa_id, tipo, titulo, texto, link)
+      select p.id, r.empresa_id, 'alerta', 'Cliente esperando na fila', txt, 'chat:' || r.id
+      from public.perfis p where p.empresa_id = r.empresa_id and p.ativo and p.papel = 'gerente';
+    end if;
+    update public.conversas set alertado_em = now() where id = r.id;
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
+-- Cria lembrete de retorno quando o cliente para de responder
+create or replace function public.processar_retornos() returns int
+language plpgsql security definer set search_path = public as $$
+declare r record; n int := 0; nome_cli text;
+begin
+  for r in
+    select c.*, coalesce((e.config->>'retorno_dias')::int, 3) dias from public.conversas c join public.empresas e on e.id = c.empresa_id
+    where c.status = 'aguardando_cliente' and c.ultima_msg_direcao = 'out' and c.responsavel_id is not null
+      and coalesce((e.config->>'retorno_dias')::int, 3) > 0
+      and c.ultima_msg_em < now() - make_interval(days => coalesce((e.config->>'retorno_dias')::int, 3))
+      and (c.retorno_em is null or c.retorno_em < c.ultima_msg_em)
+    limit 300
+  loop
+    select nome into nome_cli from public.clientes where id = r.cliente_id;
+    insert into public.tarefas (empresa_id, responsavel_id, cliente_id, conversa_id, titulo, descricao, data, hora, feita)
+    values (r.empresa_id, r.responsavel_id, r.cliente_id, r.id, 'Retornar para ' || coalesce(nome_cli, 'o cliente'),
+            'O cliente não responde há ' || r.dias || ' dia(s). Lembrete criado automaticamente.', (now() at time zone 'America/Sao_Paulo')::date, '', false);
+    perform public.notificar(r.responsavel_id, r.empresa_id, 'lembrete', 'Hora de retornar para ' || coalesce(nome_cli, 'o cliente'), 'Sem resposta há ' || r.dias || ' dia(s)', 'chat:' || r.id);
+    update public.conversas set retorno_em = now() where id = r.id;
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
+-- Distribui as conversas que ficaram na fila (ex.: ninguém estava online quando chegaram)
+create or replace function public.distribuir_fila() returns int
+language plpgsql security definer set search_path = public as $$
+declare r record; n int := 0;
+begin
+  for r in select c.id from public.conversas c join public.empresas e on e.id = c.empresa_id
+    where c.status = 'fila' and c.responsavel_id is null and c.area_id is null and e.config->>'distribuicao' = 'rodizio'
+    order by c.aguardando_desde nulls last limit 100
+  loop
+    if public.distribuir(r.id) is not null then n := n + 1; end if;
+  end loop;
+  return n;
+end $$;
+
 -- Números do painel (respeita as regras de acesso de quem está vendo)
 create or replace function public.painel_metricas(p_empresa uuid, p_inicio date, p_fim date, p_pessoa uuid default null,
   p_etiqueta uuid default null, p_status text default null) returns jsonb
@@ -939,6 +1262,10 @@ begin
   cham as (
     select ch.* from public.chamados ch where ch.empresa_id = p_empresa and ch.criado_em >= ini and ch.criado_em < fim
       and (p_pessoa is null or ch.autor_id = p_pessoa)
+  ),
+  ava as (
+    select a.* from public.avaliacoes a where a.empresa_id = p_empresa and a.criado_em >= ini and a.criado_em < fim
+      and (p_pessoa is null or a.responsavel_id = p_pessoa)
   )
   select jsonb_build_object(
     'sla_minutos', sla,
@@ -971,7 +1298,9 @@ begin
         (select responsavel_id, count(*) n, sum(total) v from ped where status <> 'cancelado' group by responsavel_id) r),
     'chamados', (select count(*) from cham),
     'chamados_abertos', (select count(*) from cham where status = 'aberto'),
-    'chamados_resolvidos', (select count(*) from cham where status = 'resolvido')
+    'chamados_resolvidos', (select count(*) from cham where status = 'resolvido'),
+    'avaliacoes', (select count(*) from ava),
+    'avaliacao_media', (select coalesce(round(avg(nota)::numeric, 1), 0) from ava)
   ) into res;
   return res;
 end $$;
@@ -985,7 +1314,8 @@ begin
   foreach t in array array['empresas','areas','perfis','clientes','negocios','etiquetas','cliente_etiquetas','conversas','mensagens',
     'mensagem_favoritas','conversa_favoritas','conversa_eventos','respostas','encaminhamentos','pedidos','tarefas','mensagens_rapidas',
     'pastas','arquivos','equipe_conversas','equipe_membros','equipe_mensagens','equipe_favoritas','ordens_servico','chamados',
-    'notificacoes','whatsapp_contas','whatsapp_tokens'] loop
+    'notificacoes','whatsapp_contas','whatsapp_tokens','notas_internas','produtos','orcamentos','mensagens_agendadas','metas',
+    'avaliacoes','_config'] loop
     execute format('alter table public.%I enable row level security', t);
     -- ninguém sem login enxerga nada; quem tem login só faz o que as regras abaixo permitirem
     execute format('revoke all on public.%I from anon', t);
@@ -1040,7 +1370,7 @@ grant select, insert, update, delete on public.clientes to authenticated;
 do $$
 declare t text;
 begin
-  foreach t in array array['negocios','tarefas','pedidos','ordens_servico'] loop
+  foreach t in array array['negocios','tarefas','pedidos','ordens_servico','orcamentos'] loop
     execute format('drop policy if exists %1$s_ver on public.%1$s', t);
     execute format($p$
       create policy %1$s_ver on public.%1$s for select to authenticated
@@ -1224,6 +1554,57 @@ drop policy if exists wa_ver on public.whatsapp_contas;
 create policy wa_ver on public.whatsapp_contas for select to authenticated using (public.acesso_empresa(empresa_id));
 grant select on public.whatsapp_contas to authenticated;
 
+-- Notas internas: quem vê a conversa vê as notas; cada um apaga as suas (gerente apaga qualquer uma)
+drop policy if exists notas_ver on public.notas_internas;
+create policy notas_ver on public.notas_internas for select to authenticated using (public.pode_ver_conversa(conversa_id));
+drop policy if exists notas_criar on public.notas_internas;
+create policy notas_criar on public.notas_internas for insert to authenticated
+  with check (autor_id = auth.uid() and public.pode_ver_conversa(conversa_id)
+    and empresa_id = (select empresa_id from public.conversas where id = conversa_id));
+drop policy if exists notas_apagar on public.notas_internas;
+create policy notas_apagar on public.notas_internas for delete to authenticated
+  using (autor_id = auth.uid() or public.lider_da_empresa(empresa_id));
+grant select, insert, delete on public.notas_internas to authenticated;
+
+-- Produtos: todos da empresa veem; gerente e admin cadastram
+drop policy if exists produtos_ver on public.produtos;
+create policy produtos_ver on public.produtos for select to authenticated using (public.acesso_empresa(empresa_id));
+drop policy if exists produtos_editar on public.produtos;
+create policy produtos_editar on public.produtos for all to authenticated
+  using (public.lider_da_empresa(empresa_id)) with check (public.lider_da_empresa(empresa_id));
+grant select, insert, update, delete on public.produtos to authenticated;
+
+-- Mensagens agendadas: quem agendou (e o gerente) vê e cancela
+drop policy if exists agend_ver on public.mensagens_agendadas;
+create policy agend_ver on public.mensagens_agendadas for select to authenticated
+  using (public.acesso_empresa(empresa_id) and (autor_id = auth.uid() or public.lider_da_empresa(empresa_id)));
+drop policy if exists agend_criar on public.mensagens_agendadas;
+create policy agend_criar on public.mensagens_agendadas for insert to authenticated
+  with check (autor_id = auth.uid() and status = 'pendente' and public.pode_ver_conversa(conversa_id)
+    and empresa_id = (select empresa_id from public.conversas where id = conversa_id));
+drop policy if exists agend_editar on public.mensagens_agendadas;
+create policy agend_editar on public.mensagens_agendadas for update to authenticated
+  using (status = 'pendente' and (autor_id = auth.uid() or public.lider_da_empresa(empresa_id)))
+  with check (status in ('pendente','cancelada'));
+grant select, insert on public.mensagens_agendadas to authenticated;
+grant update (texto, enviar_em, status) on public.mensagens_agendadas to authenticated;
+
+-- Metas: a pessoa vê a própria; gerente e admin definem para a equipe
+drop policy if exists metas_ver on public.metas;
+create policy metas_ver on public.metas for select to authenticated
+  using (public.acesso_empresa(empresa_id) and public.pode_ver_pessoa(user_id));
+drop policy if exists metas_editar on public.metas;
+create policy metas_editar on public.metas for all to authenticated
+  using (public.lider_da_empresa(empresa_id) and public.pode_ver_pessoa(user_id))
+  with check (public.lider_da_empresa(empresa_id) and public.pode_ver_pessoa(user_id) and public.pessoa_da_empresa(user_id, empresa_id));
+grant select, insert, update, delete on public.metas to authenticated;
+
+-- Avaliações: só leitura (quem gravou foi o banco, ao receber a nota do cliente)
+drop policy if exists aval_ver on public.avaliacoes;
+create policy aval_ver on public.avaliacoes for select to authenticated
+  using (public.acesso_empresa(empresa_id) and public.pode_ver_pessoa(responsavel_id));
+grant select on public.avaliacoes to authenticated;
+
 -- Funções: só quem tem login pode chamar
 do $$
 declare f text;
@@ -1231,12 +1612,18 @@ begin
   foreach f in array array['atualizar_meu_perfil(text,text,text,jsonb)','ping_presenca()','salvar_config_empresa(uuid,int)',
     'abrir_conversa(uuid)','assumir_conversa(uuid)','transferir_conversa(uuid,uuid)','mudar_status_conversa(uuid,text)',
     'encaminhar_conversa(uuid,uuid,text,int)','resolver_encaminhamento(uuid,text)','criar_conversa_equipe(uuid,text,text,uuid[])',
-    'membros_grupo(uuid,uuid[],uuid[])','painel_metricas(uuid,date,date,uuid,uuid,text)','notificar(uuid,uuid,text,text,text,text)'] loop
+    'membros_grupo(uuid,uuid[],uuid[])','painel_metricas(uuid,date,date,uuid,uuid,text)','notificar(uuid,uuid,text,text,text,text)',
+    'transferir_carteira(uuid,uuid,boolean)','transferir_contatos(uuid[],uuid)','salvar_config(uuid,jsonb)','registrar_url_automacao(text)'] loop
     execute format('revoke all on function public.%s from public, anon', f);
     execute format('grant execute on function public.%s to authenticated, service_role', f);
   end loop;
   -- notificar só é usada por dentro do banco
   execute 'revoke all on function public.notificar(uuid,uuid,text,text,text,text) from authenticated';
+  -- estas só o servidor (e o próprio banco) usam
+  foreach f in array array['distribuir(uuid)','pode_processar()','disparar_automacoes()','processar_alertas()','processar_retornos()','distribuir_fila()'] loop
+    execute format('revoke all on function public.%s from public, anon, authenticated', f);
+    execute format('grant execute on function public.%s to service_role', f);
+  end loop;
 end $$;
 
 -- =====================================================================
@@ -1285,7 +1672,7 @@ end $arq$;
 do $$
 declare t text;
 begin
-  foreach t in array array['conversas','mensagens','notificacoes','equipe_mensagens','equipe_conversas','encaminhamentos'] loop
+  foreach t in array array['conversas','mensagens','notificacoes','equipe_mensagens','equipe_conversas','encaminhamentos','notas_internas','mensagens_agendadas'] loop
     begin
       execute format('alter publication supabase_realtime add table public.%I', t);
     exception when duplicate_object then null; when undefined_object then null;
@@ -1294,11 +1681,29 @@ begin
 end $$;
 
 -- =====================================================================
+-- 7b. RELÓGIO DAS AUTOMAÇÕES (a cada minuto: mensagens agendadas, alertas,
+--     retornos e fila). Usa as extensões pg_cron e pg_net do Supabase.
+--     Se não der para ligar aqui, as automações rodam enquanto alguém
+--     estiver com o CRM aberto.
+-- =====================================================================
+do $cron$
+begin
+  create extension if not exists pg_net;
+  create extension if not exists pg_cron;
+  perform cron.schedule('crm-balcao-automacoes', '* * * * *', 'select public.disparar_automacoes()');
+  insert into public._instalacao values ('relogio', 'ok') on conflict (chave) do update set valor = 'ok';
+exception when others then
+  insert into public._instalacao values ('relogio', sqlerrm) on conflict (chave) do update set valor = excluded.valor;
+end $cron$;
+
+-- =====================================================================
 -- 8. RESULTADO (aparece embaixo, depois de clicar em Run)
 -- =====================================================================
 alter table public._instalacao enable row level security;
 revoke all on public._instalacao from anon, authenticated;
-select case when (select valor from public._instalacao where chave = 'arquivos') = 'ok'
-  then 'Tudo certo! Banco do CRM Balcão atualizado (versão 2).'
-  else 'Banco atualizado, MAS as regras de arquivos não foram criadas: ' || coalesce((select valor from public._instalacao where chave = 'arquivos'), '?') || '. Mande um print disso para o suporte.'
+select case when (select valor from public._instalacao where chave = 'arquivos') <> 'ok'
+  then 'Banco atualizado, MAS as regras de arquivos não foram criadas: ' || coalesce((select valor from public._instalacao where chave = 'arquivos'), '?') || '. Mande um print disso para o suporte.'
+  when (select valor from public._instalacao where chave = 'relogio') <> 'ok'
+  then 'Tudo certo! Banco do CRM Balcão atualizado (versão 3). Obs.: o relógio automático não ligou, então as automações rodam enquanto alguém estiver com o CRM aberto.'
+  else 'Tudo certo! Banco do CRM Balcão atualizado (versão 3), com o relógio das automações ligado.'
   end as resultado;

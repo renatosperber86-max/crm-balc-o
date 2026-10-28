@@ -124,7 +124,11 @@ export function autoAltura(ta) { ta.style.height = 'auto'; ta.style.height = Mat
 
 /* ---------- mídia ---------- */
 export function linkificar(t) {
-  return esc(t).replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+  // links clicáveis e a formatação do WhatsApp: *negrito*, _itálico_, ~riscado~
+  return esc(t).replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s.,!?)])/g, '$1<b>$2</b>')
+    .replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s.,!?)])/g, '$1<i>$2</i>')
+    .replace(/(^|[\s(])~([^~\n]+)~(?=$|[\s.,!?)])/g, '$1<s>$2</s>');
 }
 // troca data-path pelos links assinados
 export async function resolverMidias(root) {

@@ -6,7 +6,7 @@ import { formContato, gerenciarEtiquetas, chipsEtiquetas, formLembrete, escolher
 
 const POR_PAG = 25;
 const F = { busca: '', etq: '', at: '', emAt: false, bloq: false, resp: '', pag: 1 };
-let el, dados = { clientes: [], etq: new Map(), conv: new Map() }, desligar = [];
+let el, dados = { clientes: [], etq: new Map(), conv: new Map() }, desligar = [], selec = new Set();
 
 export default {
   async render(root) {
@@ -21,6 +21,7 @@ export default {
         <label class="check-line"><input type="checkbox" id="ctEm" ${F.emAt ? 'checked' : ''}> Em atendimento</label>
         <label class="check-line"><input type="checkbox" id="ctBl" ${F.bloq ? 'checked' : ''}> Bloqueados</label>
       </div></div>
+      <div id="ctSel" class="panel" style="margin-bottom:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap" hidden></div>
       <div id="ctTab"><div class="empty">Carregando contatos…</div></div>`;
     $('#ctNovo').onclick = () => formContato(null, () => carregar());
     $('#ctExp').onclick = exportar;
@@ -73,8 +74,10 @@ function tabela() {
   const pg = l.slice((F.pag - 1) * POR_PAG, F.pag * POR_PAG);
   const box = $('#ctTab'); if (!box) return;
   if (!dados.clientes.length) { box.innerHTML = '<div class="empty">Nenhum contato ainda. Clique em <b>Novo contato</b>, importe uma planilha, ou espere o primeiro cliente chamar no WhatsApp.</div>'; return; }
-  box.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Nome</th><th>Telefone</th><th>Etiquetas</th><th>Atendimento</th><th>Responsável</th><th>Última interação</th><th class="r">Ações</th></tr></thead><tbody>
+  const sel = lider();
+  box.innerHTML = `<div class="table-wrap"><table><thead><tr>${sel ? `<th style="width:36px"><input type="checkbox" id="ctTodos" aria-label="Selecionar todos desta página" ${pg.length && pg.every((c) => selec.has(c.id)) ? 'checked' : ''}></th>` : ''}<th>Nome</th><th>Telefone</th><th>Etiquetas</th><th>Atendimento</th><th>Responsável</th><th>Última interação</th><th class="r">Ações</th></tr></thead><tbody>
     ${pg.length ? pg.map((c) => { const cv = dados.conv.get(c.id); return `<tr>
+      ${sel ? `<td><input type="checkbox" data-sel="${c.id}" ${selec.has(c.id) ? 'checked' : ''} aria-label="Selecionar ${esc(c.nome)}"></td>` : ''}
       <td><b>${esc(c.nome)}</b>${c.bloqueado ? ' <span class="chip bad">Bloqueado</span>' : ''}${c.empresa_cliente ? `<div class="s">${esc(c.empresa_cliente)}</div>` : ''}</td>
       <td>${esc(fmtTel(c.whatsapp || c.telefone))}${c.email ? `<div class="s">${esc(c.email)}</div>` : ''}</td>
       <td><div class="etqs">${chipsEtiquetas(dados.etq.get(c.id), 3) || '<span class="s">—</span>'}</div></td>
@@ -82,13 +85,37 @@ function tabela() {
       <td>${c.responsavel_id ? esc(nomePessoa(c.responsavel_id)) : '<span class="s">Ninguém</span>'}</td>
       <td>${c.ultima_interacao ? fmtDataHora(c.ultima_interacao) : '<span class="s">—</span>'}</td>
       <td class="r"><button class="btn sm" data-abrir="${c.id}">Conversa</button> <button class="icon-btn" data-mais="${c.id}" aria-label="Mais ações para ${esc(c.nome)}">${icon('mais')}</button></td></tr>`; }).join('')
-      : '<tr><td colspan="7"><div class="empty" style="border:0">Nenhum contato com esses filtros.</div></td></tr>'}
+      : `<tr><td colspan="${sel ? 8 : 7}"><div class="empty" style="border:0">Nenhum contato com esses filtros.</div></td></tr>`}
     </tbody></table>
     <div class="pag"><span>Mostrando ${tot ? (F.pag - 1) * POR_PAG + 1 : 0}–${Math.min(F.pag * POR_PAG, tot)} de ${tot} contatos</span>
       <div><button class="btn sm" data-pg="-1" ${F.pag <= 1 ? 'disabled' : ''}>Anterior</button><span>Página ${F.pag} de ${pags}</span><button class="btn sm" data-pg="1" ${F.pag >= pags ? 'disabled' : ''}>Próxima</button></div></div></div>`;
+  barraSelecao(l);
+}
+function barraSelecao(filtrados) {
+  const b = $('#ctSel'); if (!b) return;
+  for (const id of [...selec]) if (!dados.clientes.some((c) => c.id === id)) selec.delete(id);
+  b.hidden = !lider();
+  if (!lider()) return;
+  b.innerHTML = selec.size ? `<b>${selec.size} contato(s) selecionado(s)</b><button class="btn sm pri" id="ctTransf">Transferir selecionados</button><button class="btn sm" id="ctLimparSel">Limpar seleção</button>`
+    : `<span class="small muted">Marque os contatos na primeira coluna para transferir vários de uma vez.</span>${filtrados.length ? `<button class="btn sm" id="ctSelTodos">Selecionar os ${filtrados.length} do filtro</button>` : ''}`;
+  $('#ctSelTodos') && ($('#ctSelTodos').onclick = () => { filtrados.forEach((c) => selec.add(c.id)); tabela(); });
+  $('#ctLimparSel') && ($('#ctLimparSel').onclick = () => { selec.clear(); tabela(); });
+  $('#ctTransf') && ($('#ctTransf').onclick = () => {
+    const ops = S.pessoas.filter((p) => p.ativo && ['gerente', 'funcionario'].includes(p.papel));
+    escolherPessoa('Transferir contatos', `Os ${selec.size} contato(s) selecionados, e as conversas deles, vão para a pessoa escolhida.`, ops, async (para) => {
+      const n = await rpc('transferir_contatos', { p_clientes: [...selec], p_para: para });
+      toast(`${n} contato(s) transferido(s) para ${nomePessoa(para)}`); selec.clear(); carregar();
+    });
+  });
 }
 
 async function clique(e) {
+  const sb = e.target.closest('[data-sel]');
+  if (sb) { if (sb.checked) selec.add(sb.dataset.sel); else selec.delete(sb.dataset.sel); barraSelecao(filtrados()); const t = $('#ctTodos'); if (t) t.checked = false; return; }
+  if (e.target.id === 'ctTodos') {
+    const ids = [...document.querySelectorAll('[data-sel]')].map((x) => x.dataset.sel);
+    ids.forEach((id) => (e.target.checked ? selec.add(id) : selec.delete(id))); tabela(); return;
+  }
   const pg = e.target.closest('[data-pg]'); if (pg) { F.pag += Number(pg.dataset.pg); tabela(); return; }
   const ab = e.target.closest('[data-abrir]');
   if (ab) { try { const id = await rpc('abrir_conversa', { p_cliente: ab.dataset.abrir }); irPara('#/chat/' + id); } catch (er) { falhou(er); } return; }

@@ -118,6 +118,8 @@ const IC = {
   x: '<path d="M6 6l12 12M18 6 6 18"/>',
   mais2: '<path d="M12 5v14M5 12h14"/>',
   check: '<path d="m5 12 5 5 9-10"/>',
+  caixa: '<path d="M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10"/>',
+  meta: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
 };
 export const icon = (n) => `<svg viewBox="0 0 24 24" aria-hidden="true">${IC[n] || ''}</svg>`;
 

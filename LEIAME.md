@@ -23,6 +23,26 @@ Essas regras ficam gravadas no próprio banco de dados. Mesmo que alguém tente 
 - **Galeria de mídia**: pastas e arquivos, privados, da equipe ou da empresa toda.
 - **Assistência**: ordens de serviço com frete e conta a pagar, e as pendências encaminhadas por outras áreas.
 - **Equipe e logins**, **Etiquetas**, **Configurações** (áreas, tempo de resposta, WhatsApp), **Empresas** e **Suporte** (chamados).
+- **Produtos**: catálogo com foto e preço. No chat, envia o produto com um clique; em pedidos e orçamentos, o preço já vem preenchido.
+- **Orçamentos**: monta com os itens do catálogo, gera o PDF, envia no chat e vira pedido quando o cliente aprova.
+
+### Para o gerente
+- **Transferir vários contatos** de uma vez (em Contatos, marque e clique em Transferir selecionados) ou a **carteira inteira** de uma pessoa (em Equipe e logins).
+- **Rodízio automático**: cliente novo vai sozinho para o próximo atendente (Configurações > Distribuição).
+- **Aviso de cliente esperando**: avisa o atendente e o gerente quando passa do tempo (padrão: 15 minutos).
+- **Metas do mês** por pessoa, com barra de progresso no painel.
+- **Horário de atendimento** com resposta automática fora do horário.
+- **Pesquisa de satisfação** ao encerrar o atendimento, com a nota média de cada vendedor no painel.
+- Responder e transferir as conversas da equipe direto pelo chat.
+
+### Para o vendedor
+- **Nota interna** na conversa (botão do lápis no chat): só a equipe vê.
+- **Agendar mensagem** para enviar depois.
+- **Lembrete automático de retorno** quando o cliente para de responder (padrão: 3 dias).
+- **Minha comissão** no painel (o percentual é cadastrado pelo gerente em Equipe e logins).
+
+As automações (mensagens agendadas, avisos, retornos e rodízio) rodam a cada minuto pelo relógio do banco (extensões pg_cron e pg_net do Supabase). Se o relógio não puder ser ligado, elas rodam enquanto alguém estiver com o CRM aberto.
+
 - **Meu perfil**: foto, status (online, ocupado, offline), tema claro ou escuro, som, senha, verificação em duas etapas, organização do menu e tour guiado.
 
 ---

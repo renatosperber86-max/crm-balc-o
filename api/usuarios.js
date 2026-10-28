@@ -96,6 +96,7 @@ async function criar(sb, eu, b, res) {
 
   const { error: perfilErr } = await sb.from('perfis').upsert({
     id: criado.user.id, nome, email, papel, empresa_id, gerente_id, area_id, ativo: true,
+    comissao_pct: Math.min(100, Math.max(0, Number(b.comissao_pct) || 0)), recebe_fila: b.recebe_fila !== false,
   });
   if (perfilErr) {
     await sb.auth.admin.deleteUser(criado.user.id); // desfaz para não sobrar login sem papel
@@ -123,6 +124,12 @@ async function atualizar(sb, eu, b, res) {
     }
     mudancas.gerente_id = b.gerente_id;
   }
+  if (b.comissao_pct !== undefined) {
+    const c = Number(b.comissao_pct);
+    if (!(c >= 0 && c <= 100)) return falha(res, 400, 'A comissão deve ser entre 0 e 100%.');
+    mudancas.comissao_pct = c;
+  }
+  if (typeof b.recebe_fila === 'boolean') mudancas.recebe_fila = b.recebe_fila;
   if (b.area_id !== undefined) {
     if (!(await areaValida(sb, b.area_id || null, alvo.empresa_id))) return falha(res, 400, 'Escolha uma área válida da empresa.');
     mudancas.area_id = b.area_id || null;

@@ -11,7 +11,7 @@ import {
 } from '../comum.js';
 
 const LIM = { imagem: 5, video: 16, audio: 16, documento: 100 }; // MB, limites do WhatsApp
-const C = { lista: [], etq: new Map(), favs: new Set(), filtro: 'todos', extra: '', busca: '', sel: null, msgs: [], eventos: [], favMsgs: new Set(), det: false, resp: null, rec: null, carregouTudo: false };
+const C = { notas: [], agendadas: [], modoNota: false, lista: [], etq: new Map(), favs: new Set(), filtro: 'todos', extra: '', busca: '', sel: null, msgs: [], eventos: [], favMsgs: new Set(), det: false, resp: null, rec: null, carregouTudo: false };
 let el, desligar = [], tickLista;
 
 export default {
@@ -36,7 +36,9 @@ export default {
     await carregarLista();
     if (arg) abrirConversa(arg);
     desligar = [
-      ouvir('conversas', aoMudarConversa), ouvir('mensagens', aoMudarMensagem), ouvir('tick', () => { carregarLista(true); if (C.sel) recarregarMsgs(); }),
+      ouvir('conversas', aoMudarConversa), ouvir('mensagens', aoMudarMensagem),
+      ouvir('notas_internas', (p) => { const n = p.new; if (n?.conversa_id === C.sel && !C.notas.some((x) => x.id === n.id)) { C.notas.push(n); desenharMensagens(false); } }),
+      ouvir('mensagens_agendadas', (p) => { if ((p.new || p.old)?.conversa_id === C.sel) recarregarAgendadas(); }), ouvir('tick', () => { carregarLista(true); if (C.sel) recarregarMsgs(); }),
     ];
     tickLista = setInterval(() => { if (S.rtOk && !document.hidden) carregarLista(true); }, 60000);
   },
@@ -185,14 +187,16 @@ async function recarregarMsgs(tudo) {
   const id = C.sel; if (!id) return;
   try {
     let qm = S.sb.from('mensagens').select('*').eq('conversa_id', id).order('criado_em', { ascending: false }).limit(tudo ? 3000 : 80);
-    const [msgs, evs, favs] = await Promise.all([
+    const [msgs, evs, favs, notas, ags] = await Promise.all([
       q(qm), q(S.sb.from('conversa_eventos').select('*').eq('conversa_id', id).order('criado_em', { ascending: true }).limit(300)),
       q(S.sb.from('mensagem_favoritas').select('mensagem_id').eq('user_id', S.me.id)),
+      q(S.sb.from('notas_internas').select('*').eq('conversa_id', id).order('criado_em', { ascending: true }).limit(300)).catch(() => []),
+      q(S.sb.from('mensagens_agendadas').select('*').eq('conversa_id', id).in('status', ['pendente', 'erro']).order('enviar_em')).catch(() => []),
     ]);
     if (C.sel !== id) return;
     C.carregouTudo = tudo || msgs.length < 80;
-    C.msgs = msgs.reverse(); C.eventos = evs; C.favMsgs = new Set(favs.map((f) => f.mensagem_id));
-    desenharMensagens(true);
+    C.msgs = msgs.reverse(); C.eventos = evs; C.favMsgs = new Set(favs.map((f) => f.mensagem_id)); C.notas = notas; C.agendadas = ags;
+    desenharMensagens(true); desenharAgendadas();
   } catch (e) { falhou(e); }
 }
 
@@ -222,7 +226,8 @@ function desenharCabecalho() {
   if (!S.waConta) av.push('<div class="cv-aviso">O WhatsApp ainda não está conectado. As mensagens que você enviar ficam guardadas só aqui no CRM.</div>');
   else if (!c.janela_ate || new Date(c.janela_ate) < new Date()) av.push('<div class="cv-aviso">Passaram mais de 24 horas desde a última mensagem do cliente. Pelas regras do WhatsApp, agora só dá para enviar um modelo aprovado. <button class="btn sm" id="cvModelo">Enviar modelo</button></div>');
   if (k.bloqueado) av.push('<div class="cv-aviso fila">Este contato está bloqueado. As mensagens dele não entram no CRM.</div>');
-  $('#cvAvisos').innerHTML = av.join('');
+  $('#cvAvisos').innerHTML = av.join('') + '<div id="cvAgend"></div>';
+  desenharAgendadas();
   $('#cvModelo') && ($('#cvModelo').onclick = enviarModelo);
   // composer liberado?
   const ta = $('#cvTxt'); if (ta) { ta.disabled = !!k.bloqueado; ta.placeholder = k.bloqueado ? 'Contato bloqueado' : 'Mensagem (digite / para atalhos)'; }
@@ -247,13 +252,15 @@ function bolha(m) {
 function desenharMensagens(rolar) {
   const box = $('#cvMsgs'); if (!box) return;
   const perto = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
-  const itens = [...C.msgs.map((m) => ({ t: m.criado_em, m })), ...C.eventos.filter((e) => !C.msgs.length || e.criado_em >= C.msgs[0].criado_em).map((e) => ({ t: e.criado_em, e }))]
+  const desdeT = (x) => !C.msgs.length || C.carregouTudo || x.criado_em >= C.msgs[0].criado_em;
+  const itens = [...C.msgs.map((m) => ({ t: m.criado_em, m })), ...C.eventos.filter(desdeT).map((e) => ({ t: e.criado_em, e })), ...C.notas.filter(desdeT).map((n) => ({ t: n.criado_em, n }))]
     .sort((a, b) => String(a.t).localeCompare(String(b.t)));
   let dia = ''; const out = [];
   if (!C.carregouTudo && C.msgs.length) out.push('<button class="btn sm" id="cvAntigas" style="align-self:center">Carregar mensagens antigas</button>');
   for (const it of itens) {
     const d = isoDia(new Date(it.t));
     if (d !== dia) { dia = d; out.push(`<div class="dia">${d === isoDia() ? 'Hoje' : fmtData(d)}</div>`); }
+    if (it.n) { out.push(`<div class="nota-int" data-nota="${it.n.id}"><div class="autor">📝 Nota interna · ${esc(nomePessoa(it.n.autor_id))}</div><div class="tx">${linkificar(it.n.texto)}</div><div class="meta"><span>${fmtHora(it.n.criado_em)}</span>${it.n.autor_id === S.me.id || lider() ? `<button type="button" class="btn sm ghost" data-del-nota="${it.n.id}">Apagar</button>` : ''}</div></div>`); continue; }
     out.push(it.m ? bolha(it.m) : `<div class="evt">${esc(it.e.texto || it.e.tipo)} · ${fmtHora(it.e.criado_em)}${it.e.autor_id ? ' · ' + esc(nomePessoa(it.e.autor_id)) : ''}</div>`);
   }
   box.innerHTML = out.join('') || '<div class="evt">Nenhuma mensagem ainda. Escreva abaixo para começar.</div>';
@@ -267,6 +274,8 @@ function atualizarBolha(m) {
   b.outerHTML = bolha(m); resolverMidias($('#cvMsgs'));
 }
 async function cliqueMensagem(e) {
+  const dn = e.target.closest('[data-del-nota]');
+  if (dn) { try { await q(S.sb.from('notas_internas').delete().eq('id', dn.dataset.delNota)); C.notas = C.notas.filter((n) => n.id !== dn.dataset.delNota); desenharMensagens(false); } catch (er) { falhou(er); } return; }
   const img = e.target.closest('img[data-ver]'); if (img) return verMidia(img.dataset.ver, img.dataset.mime, img.alt);
   const b = e.target.closest('[data-act]'); if (!b) return;
   const m = C.msgs.find((x) => x.id === b.closest('[data-msg]').dataset.msg); if (!m) return;
@@ -293,7 +302,10 @@ function desenharComposer() {
       <button class="icon-btn" id="cvAnexo" title="Enviar arquivo do computador" aria-label="Enviar arquivo">${icon('clipe')}</button>
       <button class="icon-btn" id="cvGaleria" title="Enviar da galeria" aria-label="Enviar da galeria">${icon('pasta')}</button>
       <button class="icon-btn" id="cvEmoji" title="Emoji" aria-label="Emoji">${icon('emoji')}</button>
-      <textarea id="cvTxt" rows="1" placeholder="Mensagem (digite / para atalhos)" aria-label="Mensagem"></textarea>
+      <button class="icon-btn" id="cvProd" title="Enviar produto do catálogo" aria-label="Enviar produto">${icon('caixa')}</button>
+      <button class="icon-btn ${C.modoNota ? 'on' : ''}" id="cvNota" title="Nota interna (o cliente não vê)" aria-label="Nota interna" aria-pressed="${C.modoNota}">${icon('editar')}</button>
+      <textarea id="cvTxt" rows="1" placeholder="Mensagem (digite / para atalhos)" aria-label="Mensagem" class="${C.modoNota ? 'modo-nota' : ''}"></textarea>
+      <button class="icon-btn" id="cvAgendar" title="Agendar mensagem" aria-label="Agendar mensagem">${icon('hist')}</button>
       <button class="icon-btn" id="cvMic" title="Gravar áudio" aria-label="Gravar áudio">${icon('mic')}</button>
       <button class="icon-btn on" id="cvEnviar" title="Enviar" aria-label="Enviar" hidden>${icon('enviar')}</button>
     </div><input type="file" id="cvArq" multiple hidden>`;
@@ -306,6 +318,10 @@ function desenharComposer() {
   $('#cvGaleria').onclick = () => escolherDaGaleria((arqs) => arqs.forEach((a) => enviarMidia({ midia_path: a.path, midia_mime: a.mime, midia_nome: a.nome, midia_tamanho: a.tamanho })));
   $('#cvEmoji').onclick = (e) => escolherEmoji(e.currentTarget, (em) => inserirNoCursor(ta, em));
   $('#cvMic').onclick = gravar;
+  $('#cvProd').onclick = enviarProduto;
+  $('#cvAgendar').onclick = () => agendar();
+  $('#cvNota').onclick = () => { C.modoNota = !C.modoNota; desenharComposer(); $('#cvTxt').focus(); };
+  if (C.modoNota) { ta.placeholder = 'Nota interna: só a equipe vê. Enter para salvar'; }
   const conv2 = $('#conv');
   conv2.ondragover = (e) => { e.preventDefault(); };
   conv2.ondrop = (e) => { e.preventDefault(); if (e.dataTransfer.files.length) enviarArquivos([...e.dataTransfer.files]); };
@@ -366,6 +382,15 @@ async function enviar(dados) {
 }
 async function enviarTexto() {
   const ta = $('#cvTxt'); const texto = ta.value.trim(); if (!texto || !C.sel) return;
+  if (C.modoNota) {
+    ta.value = ''; ta.dispatchEvent(new Event('input'));
+    try {
+      const c = conv(C.sel);
+      const n = await q(S.sb.from('notas_internas').insert({ empresa_id: c.empresa_id, conversa_id: c.id, autor_id: S.me.id, texto }).select().single());
+      if (!C.notas.some((x) => x.id === n.id)) C.notas.push(n); desenharMensagens(true);
+    } catch (e) { ta.value = texto; falhou(e); }
+    return;
+  }
   const resposta_a = C.resp?.id || null;
   ta.value = ''; ta.dispatchEvent(new Event('input')); C.resp = null; desenharResposta();
   try { await enviar({ tipo: 'texto', texto, resposta_a }); } catch (e) { if (!ta.value) { ta.value = texto; ta.dispatchEvent(new Event('input')); } }
@@ -442,7 +467,12 @@ function mudarStatus() {
     <div class="dlg-actions"><div class="r"><button type="button" class="btn" id="f-cancel">Fechar</button></div></div>`, null);
   f.onclick = async (e) => {
     const b = e.target.closest('[data-st]'); if (!b) return;
-    try { await rpc('mudar_status_conversa', { p_conversa: C.sel, p_status: b.dataset.st }); fechar(); toast('Status: ' + STATUS[b.dataset.st].nome); await recarregarConversa(); } catch (er) { falhou(er); }
+    try {
+      const st = b.dataset.st, id = C.sel;
+      await rpc('mudar_status_conversa', { p_conversa: id, p_status: st }); fechar(); toast('Status: ' + STATUS[st].nome);
+      if (st === 'encerrada') api('automacao', { acao: 'encerrou', conversa_id: id }).then((r) => { if (r.enviada) toast('Pesquisa de satisfação enviada ao cliente'); else if (r.aviso) toast(r.aviso, true); if (C.sel === id) recarregarMsgs(); }).catch(() => {});
+      await recarregarConversa();
+    } catch (er) { falhou(er); }
   };
 }
 function transferir() {
@@ -475,6 +505,9 @@ async function menuConversa(btn) {
     ['encaminhar', 'Encaminhar para área', 'voltar'],
     '-',
     ['lembrete', 'Criar lembrete', 'lembretes'],
+    ['orcamento', 'Enviar orçamento', 'doc'],
+    ['agendar', 'Agendar mensagem', 'hist'],
+    ['produto', 'Enviar produto do catálogo', 'caixa'],
     ['pedido', 'Novo pedido', 'pedidos'],
     ['os', 'Nova ordem de serviço', 'assistencia'],
     ['etiquetas', 'Gerenciar etiquetas', 'etiquetas'],
@@ -497,6 +530,9 @@ async function menuConversa(btn) {
       if (v === 'transferir') return transferir();
       if (v === 'encaminhar') return encaminhar();
       if (v === 'lembrete') return formLembrete(null, null, { cliente_id: c.cliente_id, conversa_id: c.id, nomeCliente: k.nome, responsavel_id: c.responsavel_id || undefined });
+      if (v === 'orcamento') return (await import('./orcamentos.js')).formOrcamento(null, () => recarregarMsgs(), { cliente_id: c.cliente_id, conversa_id: c.id, responsavel_id: c.responsavel_id });
+      if (v === 'agendar') return agendar();
+      if (v === 'produto') return enviarProduto();
       if (v === 'pedido') return (await import('./pedidos.js')).formPedido(null, null, { cliente_id: c.cliente_id, conversa_id: c.id, responsavel_id: c.responsavel_id });
       if (v === 'os') return (await import('./assistencia.js')).formOS(null, null, { cliente_id: c.cliente_id, conversa_id: c.id, responsavel_id: c.responsavel_id });
       if (v === 'etiquetas') return gerenciarEtiquetas(c.cliente_id, k.nome, (l) => { C.etq.set(c.cliente_id, l); desenharLista(); if (C.det) abrirDetalhes(); });
@@ -600,5 +636,59 @@ function novaConversa() {
   escolherContato('Nova conversa', async (cli) => {
     try { const id = await rpc('abrir_conversa', { p_cliente: cli.id }); await carregarLista(true); irPara('#/chat/' + id); }
     catch (e) { falhou(e); }
+  });
+}
+
+/* ---------- produtos, agendamento ---------- */
+async function enviarProduto() {
+  const { escolherProduto } = await import('./produtos.js');
+  escolherProduto('Enviar produto', async (p) => {
+    const brl = (n) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n);
+    const texto = `*${p.nome}*\n${brl(p.preco)}${p.descricao ? '\n' + p.descricao : ''}`;
+    try {
+      if (p.foto_path) await enviar({ tipo: 'imagem', texto, midia_path: p.foto_path, midia_mime: p.foto_mime || 'image/jpeg', midia_nome: p.nome });
+      else await enviar({ tipo: 'texto', texto });
+    } catch (e) {}
+  });
+}
+async function recarregarAgendadas() {
+  if (!C.sel) return;
+  C.agendadas = await q(S.sb.from('mensagens_agendadas').select('*').eq('conversa_id', C.sel).in('status', ['pendente', 'erro']).order('enviar_em')).catch(() => []);
+  desenharAgendadas();
+}
+function desenharAgendadas() {
+  const box = $('#cvAgend'); if (!box) return;
+  box.innerHTML = C.agendadas.map((a) => `<div class="cv-aviso" style="background:var(--info-soft)">${a.status === 'erro' ? '⚠ Não foi enviada' : '🕓 Agendada para ' + fmtDataHora(a.enviar_em)}: <b>${esc(a.texto.slice(0, 80))}</b>${a.erro ? ` <span class="small">(${esc(a.erro)})</span>` : ''}
+    ${a.status === 'pendente' ? `<button class="btn sm" data-ag-ed="${a.id}">Editar</button><button class="btn sm" data-ag-x="${a.id}">Cancelar</button>` : `<button class="btn sm" data-ag-ok="${a.id}">Dispensar</button>`}</div>`).join('');
+  box.onclick = async (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    const id = b.dataset.agEd || b.dataset.agX || b.dataset.agOk; const a = C.agendadas.find((x) => x.id === id);
+    try {
+      if (b.dataset.agEd) return agendar(a);
+      if (b.dataset.agX) { await q(S.sb.from('mensagens_agendadas').update({ status: 'cancelada' }).eq('id', id)); toast('Agendamento cancelado'); }
+      if (b.dataset.agOk) { C.agendadas = C.agendadas.filter((x) => x.id !== id); desenharAgendadas(); return; }
+      recarregarAgendadas();
+    } catch (er) { falhou(er); }
+  };
+}
+function agendar(a) {
+  const c = conv(C.sel); if (!c) return;
+  const ta = $('#cvTxt'); const pre = a?.texto || (C.modoNota ? '' : ta?.value.trim() || '');
+  const d = a ? new Date(a.enviar_em) : new Date(Date.now() + 3600e3);
+  const dia = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const hora = String(d.getHours()).padStart(2, '0') + ':' + String(a ? d.getMinutes() : 0).padStart(2, '0');
+  abrir(`<h3>${a ? 'Editar mensagem agendada' : 'Agendar mensagem'}</h3><p class="hint">O sistema envia sozinho no dia e hora escolhidos. Pelas regras do WhatsApp, só funciona se o cliente tiver mandado mensagem nas 24 horas anteriores.</p>
+    <div class="field"><label for="agT">Mensagem *</label><textarea id="agT" name="texto" required style="min-height:110px">${esc(pre)}</textarea></div>
+    <div class="fields2"><div class="field"><label for="agD">Dia</label><input id="agD" name="dia" type="date" required value="${dia}"></div>
+    <div class="field"><label for="agH">Hora</label><input id="agH" name="hora" type="time" required value="${hora}"></div></div>
+    ${rodape({ salvar: a ? 'Salvar' : 'Agendar' })}`,
+  async (dd) => {
+    const quando = new Date(dd.dia + 'T' + dd.hora);
+    if (!(quando > new Date())) throw new Error('Escolha um horário no futuro.');
+    if (a) await q(S.sb.from('mensagens_agendadas').update({ texto: dd.texto.trim(), enviar_em: quando.toISOString() }).eq('id', a.id));
+    else await q(S.sb.from('mensagens_agendadas').insert({ empresa_id: c.empresa_id, conversa_id: c.id, autor_id: S.me.id, texto: dd.texto.trim(), enviar_em: quando.toISOString() }));
+    if (!a && ta && ta.value.trim() === dd.texto.trim()) { ta.value = ''; ta.dispatchEvent(new Event('input')); }
+    toast('Mensagem agendada para ' + quando.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }));
+    recarregarAgendadas();
   });
 }

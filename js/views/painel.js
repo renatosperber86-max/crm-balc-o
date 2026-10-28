@@ -52,12 +52,14 @@ async function atualizar(silencioso) {
   const corpo = $('#pCorpo'); if (!corpo) return;
   try {
     const pessoa = lider() ? (F.pessoa || null) : S.me.id;
-    const [m, negs] = await Promise.all([
+    const [m, negs, mesDados] = await Promise.all([
       rpc('painel_metricas', { p_empresa: S.empresaId, p_inicio: F.inicio, p_fim: F.fim, p_pessoa: pessoa, p_etiqueta: F.etiqueta || null, p_status: F.status || null }),
       buscarTudo('negocios', (x) => { x = x.eq('empresa_id', S.empresaId); return pessoa ? x.eq('responsavel_id', pessoa) : x; }, 'id,etapa,valor,fechado_em,responsavel_id'),
+      dadosDoMes(pessoa),
     ]);
-    ultimo = { m, negs };
-    corpo.innerHTML = desenhar(m, negs, pessoa);
+    ultimo = { m, negs, mesDados };
+    corpo.innerHTML = desenhar(m, negs, pessoa) ;
+    corpo.insertAdjacentHTML('afterbegin', blocoMeta(mesDados, pessoa, m));
   } catch (e) { if (!silencioso) { corpo.innerHTML = '<div class="empty">Não foi possível carregar o painel.</div>'; falhou(e); } }
 }
 
@@ -120,9 +122,12 @@ document.addEventListener('click', async (e) => {
   const box = $('#pPessoas'); const b = e.target.closest('button'); b.disabled = true; b.textContent = 'Calculando…';
   try {
     const ps = minhaEquipe().filter((p) => p.papel !== 'admin' && p.ativo).sort(ordPessoa);
+    const md = await dadosDoMes(null);
     const rs = await Promise.all(ps.map((p) => rpc('painel_metricas', { p_empresa: S.empresaId, p_inicio: F.inicio, p_fim: F.fim, p_pessoa: p.id, p_etiqueta: F.etiqueta || null, p_status: F.status || null })));
-    box.innerHTML = `<div class="panel-h"><div><h3>Desempenho por pessoa</h3><p>No período escolhido</p></div></div><div class="table-wrap" style="border:0"><table><thead><tr><th>Pessoa</th><th class="r">Pedidos</th><th class="r">Valor</th><th class="r">Esperando resposta</th><th class="r">Encerradas</th><th class="r">Resolução</th><th class="r">Resposta no prazo</th></tr></thead><tbody>
-      ${ps.map((p, i) => { const m = rs[i]; return `<tr><td><b>${esc(p.nome || p.email)}</b> <span class="small muted">${PAPEL_NOME[p.papel]}</span></td><td class="r">${m.pedidos}</td><td class="r">${brl(m.pedidos_valor)}</td><td class="r">${m.aguardando_resposta ? `<span class="chip gold">${m.aguardando_resposta}</span>` : 0}</td><td class="r">${m.encerradas_periodo}</td><td class="r">${pct(m.resolvidas, m.atribuidas)}%</td><td class="r">${pct(m.respostas_no_prazo, m.respostas)}%</td></tr>`; }).join('')}</tbody></table></div>`;
+    box.innerHTML = `<div class="panel-h"><div><h3>Desempenho por pessoa</h3><p>No período escolhido</p></div></div><div class="table-wrap" style="border:0"><table><thead><tr><th>Pessoa</th><th class="r">Pedidos</th><th class="r">Valor</th><th class="r">Esperando resposta</th><th class="r">Encerradas</th><th class="r">Resolução</th><th class="r">Resposta no prazo</th><th class="r">Meta do mês</th><th class="r">Comissão</th><th class="r">Nota</th></tr></thead><tbody>
+      ${ps.map((p, i) => { const m = rs[i]; return `<tr><td><b>${esc(p.nome || p.email)}</b> <span class="small muted">${PAPEL_NOME[p.papel]}</span></td><td class="r">${m.pedidos}</td><td class="r">${brl(m.pedidos_valor)}</td><td class="r">${m.aguardando_resposta ? `<span class="chip gold">${m.aguardando_resposta}</span>` : 0}</td><td class="r">${m.encerradas_periodo}</td><td class="r">${pct(m.resolvidas, m.atribuidas)}%</td><td class="r">${pct(m.respostas_no_prazo, m.respostas)}%</td>
+        <td class="r">${(() => { const r = resumoPessoa(md, p.id); return r.meta.meta_valor ? Math.round(r.vendido / r.meta.meta_valor * 100) + '%' : '—'; })()}</td>
+        <td class="r">${brl(resumoPessoa(md, p.id).comissao)}</td><td class="r">${m.avaliacoes ? String(m.avaliacao_media).replace('.', ',') + ' ★' : '—'}</td></tr>`; }).join('')}</tbody></table></div>`;
   } catch (er) { falhou(er); b.disabled = false; b.textContent = 'Mostrar'; }
 });
 
@@ -145,3 +150,51 @@ async function exportar(btn) {
     ]);
   });
 }
+
+/* ---------- meta, comissão e avaliação ---------- */
+function mesDe(dia) { const [y, mo] = dia.split('-').map(Number); const ini = new Date(y, mo - 1, 1), fim = new Date(y, mo, 1); return { ini, fim, chave: isoDia(ini) }; }
+async function dadosDoMes(pessoa) {
+  const { ini, fim, chave } = mesDe(F.fim);
+  let qp = S.sb.from('pedidos').select('responsavel_id,total,status').eq('empresa_id', S.empresaId).gte('criado_em', ini.toISOString()).lt('criado_em', fim.toISOString()).neq('status', 'cancelado');
+  if (pessoa) qp = qp.eq('responsavel_id', pessoa);
+  let qm = S.sb.from('metas').select('*').eq('empresa_id', S.empresaId).eq('mes', chave);
+  if (pessoa) qm = qm.eq('user_id', pessoa);
+  const [peds, metas] = await Promise.all([q(qp).catch(() => []), q(qm).catch(() => [])]);
+  return { peds, metas, chave };
+}
+function resumoPessoa(md, id) {
+  const ps = md.peds.filter((p) => p.responsavel_id === id); const meta = md.metas.find((x) => x.user_id === id) || {};
+  const vendido = ps.reduce((a, p) => a + Number(p.total), 0); const pagos = ps.filter((p) => p.status === 'pago').reduce((a, p) => a + Number(p.total), 0);
+  const pct = Number((S.pessoas.find((x) => x.id === id) || (S.me.id === id ? S.me : {})).comissao_pct || 0);
+  return { vendido, pagos, n: ps.length, meta, comissao: pagos * pct / 100, pct };
+}
+function barra(atual, alvo) {
+  const p = alvo ? Math.min(100, Math.round((atual / alvo) * 100)) : 0;
+  return `<div class="meter"><i style="width:${p}%;background:${p >= 100 ? 'var(--good)' : p >= 60 ? 'var(--accent)' : 'var(--gold)'}"></i></div>`;
+}
+function blocoMeta(md, pessoa, m) {
+  const nomeMes = new Date(md.chave + 'T12:00').toLocaleDateString('pt-BR', { month: 'long' });
+  const aval = `<div class="panel"><div class="lb small muted" style="font-weight:600">Nota dos clientes</div><div class="vl" style="font-family:var(--display);font-size:32px;font-weight:700">${m.avaliacoes ? String(m.avaliacao_media).replace('.', ',') + ' ★' : '—'}</div>
+    <div class="small muted">${m.avaliacoes ? `${m.avaliacoes} avaliação(ões) no período` : 'Sem avaliações no período. Ligue a pesquisa em Configurações.'}</div></div>`;
+  if (pessoa) {
+    const r = resumoPessoa(md, pessoa); const temMeta = r.meta.meta_valor || r.meta.meta_pedidos;
+    return `<div class="dash2" style="margin:0 0 14px">
+      <div class="panel"><div class="lb small muted" style="font-weight:600">Meta de ${esc(nomeMes)}</div>
+        ${temMeta ? `<div class="vl" style="font-family:var(--display);font-size:24px;font-weight:700">${brl(r.vendido)} <span class="small muted" style="font-family:var(--body);font-weight:500">de ${brl(r.meta.meta_valor)}</span></div>${barra(r.vendido, r.meta.meta_valor)}
+          ${r.meta.meta_pedidos ? `<div class="small muted" style="margin-top:8px">${r.n} de ${r.meta.meta_pedidos} pedidos</div>${barra(r.n, r.meta.meta_pedidos)}` : ''}`
+        : `<div class="small muted" style="margin-top:6px">Nenhuma meta definida para este mês.${lider() ? ' Defina em Equipe e logins > Metas do mês.' : ''}</div><div class="vl" style="font-family:var(--display);font-size:24px;font-weight:700;margin-top:6px">${brl(r.vendido)}</div><div class="small muted">vendido no mês</div>`}</div>
+      <div class="panel"><div class="lb small muted" style="font-weight:600">${pessoa === S.me.id ? 'Minha comissão' : 'Comissão'} em ${esc(nomeMes)}</div><div class="vl" style="font-family:var(--display);font-size:32px;font-weight:700">${brl(r.comissao)}</div>
+        <div class="small muted">${r.pct ? `${String(r.pct).replace('.', ',')}% sobre ${brl(r.pagos)} em pedidos pagos` : 'Percentual de comissão não cadastrado.'}</div></div>
+      ${aval}</div>`;
+  }
+  const tot = md.metas.reduce((a, x) => a + Number(x.meta_valor), 0); const vend = md.peds.reduce((a, p) => a + Number(p.total), 0);
+  return `<div class="dash2" style="margin:0 0 14px;grid-template-columns:2fr 1fr">
+    <div class="panel"><div class="panel-h" style="margin-bottom:6px"><div><h3>Metas de ${esc(nomeMes)}</h3><p>${tot ? `${brl(vend)} de ${brl(tot)} somando a equipe` : 'Nenhuma meta definida para este mês.'}</p></div>${lider() ? '<button class="btn sm" id="pMetas">Definir metas</button>' : ''}</div>
+      ${tot ? barra(vend, tot) : ''}
+      ${md.metas.length ? `<div class="rank" style="margin-top:12px">${md.metas.map((x) => { const r = resumoPessoa(md, x.user_id); const p = x.meta_valor ? Math.round(r.vendido / x.meta_valor * 100) : 0; return `<div class="rr"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(nomePessoa(x.user_id))}</span><div class="tr"><i style="width:${Math.min(100, p)}%"></i></div><b>${p}%</b></div>`; }).join('')}</div>` : ''}</div>
+    ${aval}</div>`;
+}
+document.addEventListener('click', async (e) => {
+  if (!e.target.closest('#pMetas')) return;
+  const { metas } = await import('./logins.js'); metas(mesDe(F.fim).chave);
+});
